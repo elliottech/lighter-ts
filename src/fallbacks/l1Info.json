@@ -1,0 +1,25 @@
+{
+  "code": 200,
+  "l1_providers": [
+    {
+      "chainId": 1,
+      "networkId": 1,
+      "latestBlockNumber": 0
+    }
+  ],
+  "l1_providers_health": true,
+  "validator_info": [],
+  "contract_addresses": [
+    {
+      "name": "ZkLighterContract",
+      "address": "0x3B4D794a66304F130a4Db8F2551B0070dfCf5ca7"
+    },
+    {
+      "name": "USDCContract",
+      "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    }
+  ],
+  "latest_l1_generic_block": 0,
+  "latest_l1_governance_block": 0,
+  "latest_l1_desert_block": 0
+}

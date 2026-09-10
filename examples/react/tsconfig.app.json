@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    /* `zklighter-perps` (a peer dep of lighter-ts) ships raw .ts rather than
+       compiled .d.ts, so `tsc` typechecks its generated sources as part of this
+       program — `skipLibCheck` only covers .d.ts files. Its generated code trips
+       these three rules ~830 times. Oxlint still covers unused variables in
+       `src/`. Re-enable them if that package ever ships declarations. */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "erasableSyntaxOnly": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}

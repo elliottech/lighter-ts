@@ -1,0 +1,1 @@
+export const SELECTOR_MAX_LRU_CACHE_SIZE = 5
