@@ -292,20 +292,33 @@
 
 .auth-actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding-top: 0.25rem;
+  gap: 0.6rem;
+  padding-top: 0.9rem;
   border-top: 1px solid var(--line);
 }
 
 .auth-status {
-  flex: 1;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.8125rem;
   color: var(--meta);
+}
+
+.auth-status:empty {
+  display: none;
+}
+
+.auth-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.auth-buttons .btn {
+  min-width: 11rem;
 }
 
 .auth-done {

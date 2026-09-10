@@ -193,7 +193,11 @@ const AuthenticateForm = () => {
   } else if (didAuthenticate) {
     statusMessage = 'Authenticated'
   } else if (isError) {
-    statusMessage = 'Try again'
+    const errorMessage =
+      signMessagesMutation.error?.message ||
+      changePubKeyMutation.error?.message ||
+      createAccountMutation.error?.message
+    statusMessage = errorMessage?.split('\n')[0] || 'Something went wrong'
   }
 
   let authButtonText = buttonText
@@ -280,35 +284,37 @@ const AuthenticateForm = () => {
           {statusMessage}
         </span>
 
-        {isError && (
-          <button type="button" className="btn btn-ghost" onClick={() => logout()}>
-            Disconnect
-          </button>
-        )}
+        <div className="auth-buttons">
+          {isError && (
+            <button type="button" className="btn btn-ghost" onClick={() => logout()}>
+              Disconnect
+            </button>
+          )}
 
-        {!userAccount && !IS_MAINNET ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={accountsQuery.isPending || createAccountMutation.isPending}
-            onClick={() => createAccountMutation.mutate()}
-          >
-            {createAccountMutation.isPending ? 'Creating…' : buttonText}
-          </button>
-        ) : isAuthenticating ? (
-          <button type="button" className="btn btn-ghost" onClick={handleCancel}>
-            Cancel
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={didAuthenticate}
-            onClick={startSignMessages}
-          >
-            {didAuthenticate ? `✓ ${authButtonText}` : authButtonText}
-          </button>
-        )}
+          {!userAccount && !IS_MAINNET ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={accountsQuery.isPending || createAccountMutation.isPending}
+              onClick={() => createAccountMutation.mutate()}
+            >
+              {createAccountMutation.isPending ? 'Creating…' : buttonText}
+            </button>
+          ) : isAuthenticating ? (
+            <button type="button" className="btn btn-ghost" onClick={handleCancel}>
+              Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={didAuthenticate}
+              onClick={startSignMessages}
+            >
+              {didAuthenticate ? `✓ ${authButtonText}` : authButtonText}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   )

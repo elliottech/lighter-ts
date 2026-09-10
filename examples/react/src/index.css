@@ -112,6 +112,11 @@ button:disabled {
   background: #ffffff;
 }
 
+.btn-primary .spinner {
+  border-color: rgba(6, 6, 12, 0.2);
+  border-top-color: var(--bg);
+}
+
 .btn-ghost {
   background: var(--fill);
   border: 1px solid var(--line);
