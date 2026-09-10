@@ -47,9 +47,10 @@ const Step = ({
   pendingLabel: string
 }) => (
   <li className="auth-step" data-state={state}>
-    <span className="auth-step-index">{index}</span>
+    <span className="auth-step-index">{state === 'success' ? '✓' : index}</span>
     <span className="auth-step-title">{title}</span>
     <span className="auth-step-state">
+      {state === 'pending' && <span className="spinner" aria-hidden="true" />}
       {state === 'pending' ? pendingLabel : STEP_LABEL[state]}
     </span>
   </li>
@@ -192,7 +193,11 @@ const AuthenticateForm = () => {
   } else if (didAuthenticate) {
     statusMessage = 'Authenticated'
   } else if (isError) {
-    statusMessage = 'Try again'
+    const errorMessage =
+      signMessagesMutation.error?.message ||
+      changePubKeyMutation.error?.message ||
+      createAccountMutation.error?.message
+    statusMessage = errorMessage?.split('\n')[0] || 'Something went wrong'
   }
 
   let authButtonText = buttonText
@@ -207,18 +212,35 @@ const AuthenticateForm = () => {
   }
 
   if (accountExistence === 'Exists') {
-    return <section className="auth">Authenticated</section>
+    return (
+      <section className="card auth-done">
+        <span className="auth-done-icon" aria-hidden="true">
+          ✓
+        </span>
+        <div>
+          <h2 className="card-title">Authenticated</h2>
+          <p>
+            Trading key registered for <span className="mono">{shortAddress(userAddress)}</span>
+          </p>
+        </div>
+      </section>
+    )
   }
 
   if (accountExistence === 'Deciding') {
-    return <section className="auth">Loading</section>
+    return (
+      <section className="card auth-loading">
+        <span className="spinner" aria-hidden="true" />
+        <span>Checking account…</span>
+      </section>
+    )
   }
 
   return (
-    <section className="auth">
-      <header className="auth-header">
-        <h2>{userAccount ? 'Authenticate' : 'Create account'}</h2>
-        <span className="auth-address" title={userAddress}>
+    <section className="card">
+      <header className="card-header">
+        <h2 className="card-title">{userAccount ? 'Authenticate' : 'Create account'}</h2>
+        <span className="address" title={userAddress}>
           {shortAddress(userAddress)}
         </span>
       </header>
@@ -258,32 +280,41 @@ const AuthenticateForm = () => {
 
       <div className="auth-actions">
         <span className="auth-status" role="status" aria-live="polite">
+          {isAuthenticating && <span className="spinner" aria-hidden="true" />}
           {statusMessage}
         </span>
 
-        {isError && (
-          <button type="button" onClick={() => logout()}>
-            Disconnect
-          </button>
-        )}
+        <div className="auth-buttons">
+          {isError && (
+            <button type="button" className="btn btn-ghost" onClick={() => logout()}>
+              Disconnect
+            </button>
+          )}
 
-        {!userAccount && !IS_MAINNET ? (
-          <button
-            type="button"
-            disabled={accountsQuery.isPending || createAccountMutation.isPending}
-            onClick={() => createAccountMutation.mutate()}
-          >
-            {createAccountMutation.isPending ? 'Creating…' : buttonText}
-          </button>
-        ) : isAuthenticating ? (
-          <button type="button" onClick={handleCancel}>
-            Cancel
-          </button>
-        ) : (
-          <button type="button" disabled={didAuthenticate} onClick={startSignMessages}>
-            {didAuthenticate ? `✓ ${authButtonText}` : authButtonText}
-          </button>
-        )}
+          {!userAccount && !IS_MAINNET ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={accountsQuery.isPending || createAccountMutation.isPending}
+              onClick={() => createAccountMutation.mutate()}
+            >
+              {createAccountMutation.isPending ? 'Creating…' : buttonText}
+            </button>
+          ) : isAuthenticating ? (
+            <button type="button" className="btn btn-ghost" onClick={handleCancel}>
+              Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={didAuthenticate}
+              onClick={startSignMessages}
+            >
+              {didAuthenticate ? `✓ ${authButtonText}` : authButtonText}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   )

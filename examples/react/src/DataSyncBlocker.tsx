@@ -22,8 +22,11 @@ const DataSyncBlocker = ({ children }: PropsWithChildren) => {
 
   if (isRobinhoodEnv() && (!orderBookMetasLoaded || !assetMetasLoaded)) {
     return (
-      <div>
-        <span>Loading</span>
+      <div className="boot">
+        <div>
+          <span className="spinner" />
+          <span>Loading markets…</span>
+        </div>
       </div>
     )
   }

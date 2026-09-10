@@ -16,6 +16,8 @@ const useInjectedConnector = () => {
   )
 }
 
+const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`
+
 export const ConnectWallet = () => {
   const { address, isConnected } = useConnection()
   const connector = useInjectedConnector()
@@ -39,11 +41,13 @@ export const ConnectWallet = () => {
   if (isConnected && address) {
     return (
       <div className="wallet">
-        <span className="wallet-address" title={address}>
-          {address}
+        <span className="wallet-chip mono" title={address}>
+          <span className="wallet-dot" aria-hidden="true" />
+          {shortAddress(address)}
         </span>
         <button
           type="button"
+          className="btn btn-ghost btn-sm"
           onClick={() => {
             logout()
           }}
@@ -56,13 +60,14 @@ export const ConnectWallet = () => {
 
   return (
     <div className="wallet">
-      <span>No wallet connected</span>
       <button
         type="button"
+        className="btn btn-primary btn-sm"
         disabled={!connector || isPending}
         onClick={() => connector && connect({ connector })}
       >
-        {isPending ? 'Connecting…' : 'Connect'}
+        {isPending && <span className="spinner" aria-hidden="true" />}
+        {isPending ? 'Connecting…' : 'Connect wallet'}
       </button>
       {error && <span className="wallet-error">{error.message}</span>}
     </div>
