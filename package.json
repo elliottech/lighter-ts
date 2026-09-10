@@ -40,7 +40,7 @@
     "@types/lodash-es": "4.17.12",
     "@types/node": "25.9.5",
     "@types/react": "19.2.18",
-    "cpx": "1.5.0",
+    "cpx2": "9.0.3",
     "date-fns": "4.4.0",
     "decimal.js": "10.6.0",
     "i18next": "26.4.1",
@@ -66,5 +66,8 @@
     "zklighter-perps": ">=1.0.301",
     "zod": ">=4.4.3",
     "zustand": ">=5.0.13"
+  },
+  "resolutions": {
+    "esbuild": "0.28.2"
   }
 }
