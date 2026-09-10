@@ -1,6 +1,6 @@
 {
   "name": "lighter-ts",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Lighter Typescript Client SDK",
   "packageManager": "yarn@4.18.0",
   "exports": {
