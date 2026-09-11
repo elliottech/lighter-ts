@@ -126,3 +126,24 @@ websocket bridge, the init hooks, and [`actions/`](./actions).
   `as const` + lookup-type pattern rather than TS `enum`, so they survive
   `isolatedModules` and erase cleanly.
 - **Tests** are colocated as `*.test.ts` and run with `vitest`.
+
+## Development and releases
+
+```bash
+yarn install        # also wires the git hooks (.githooks)
+yarn typecheck && yarn lint && yarn test --run
+yarn build          # emits dist/, the only directory that is published
+yarn scan:secrets
+```
+
+A pre-commit hook scans staged files for secrets, and `yarn npm publish` runs
+the same scan over the whole tree (including `dist/`) via `prepack`. Both use
+[secretlint](https://github.com/secretlint/secretlint) with the recommended
+preset; exclusions go in `.secretlintignore`.
+
+CI is GitHub Actions ([`.github/workflows`](.github/workflows)): every PR and
+push to `main` is typechecked, linted, tested and built, and `main` publishes
+the version in `package.json` to npm when it is not published yet. Publishing
+goes through [npm trusted publishing](https://docs.npmjs.com/trusted-publishers),
+so there is no npm token in the repo: `publish.yml` is registered as the
+package's trusted publisher, and provenance is attached automatically.
