@@ -1,0 +1,29 @@
+#!/bin/sh
+# Blocks the commit when a staged file contains something that looks like a
+# secret (secretlint, @secretlint/secretlint-rule-preset-recommend).
+# The staged snapshot is scanned, not the working tree, so partially staged
+# files are judged on what would actually be committed.
+# A known false positive can be excluded in .secretlintignore.
+if git diff --cached --quiet --diff-filter=ACMR; then
+  exit 0
+fi
+
+ROOT=$(git rev-parse --show-toplevel)
+SECRETLINT="$ROOT/node_modules/.bin/secretlint"
+if [ ! -x "$SECRETLINT" ]; then
+  echo "pre-commit: secretlint is not installed. Run: yarn install"
+  exit 1
+fi
+
+STAGED=$(cd "$(mktemp -d)" && pwd -P)
+trap 'rm -rf "$STAGED"' EXIT
+git diff --cached --name-only --diff-filter=ACMR -z | git checkout-index -z --stdin --prefix="$STAGED/"
+
+OUTPUT=$(cd "$STAGED" && "$SECRETLINT" --secretlintrc "$ROOT/.secretlintrc.json" --secretlintignore "$ROOT/.secretlintignore" "**/*" 2>&1)
+STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+  printf '%s\n' "$OUTPUT" | sed "s|$STAGED/||g"
+  echo ""
+  echo "pre-commit: a staged file looks like it contains a secret. Remove it and commit again."
+  exit 1
+fi
