@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22.19.0"
+          node-version: "22.23.4"
 
       - name: Enable Corepack
         run: corepack enable
@@ -30,9 +30,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-22.19.0-node_modules-${{ hashFiles('yarn.lock') }}
+          key: ${{ runner.os }}-node-22.23.4-node_modules-${{ hashFiles('yarn.lock') }}
           restore-keys: |
-            ${{ runner.os }}-node-22.19.0-node_modules-
+            ${{ runner.os }}-node-22.23.4-node_modules-
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
