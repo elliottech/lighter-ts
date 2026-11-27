@@ -51,7 +51,7 @@ mutates these objects in place. It is the only thing that should write to them.
 | `env.ts` | Current environment (`local` / `staging` / `testnet` / `mainnet` / `robinhood-*`), its base checks, and the named behavior predicates call sites use | `null!` |
 | `transactionConfig.ts` | Signers, API key index, platform, `client_order_index` generator, registration check, `skipNonce` | `null!` |
 | `sha256.ts` | Hashing used by the transaction path | Rejects with an explicit "not initialized" error |
-| `persistence.ts` | Key/value storage backing user preferences
+| `persistence.ts` | Key/value storage backing user preferences | No-op; reads return `null` |
 | `errorReporting.ts` | `captureException` | No-op returning `''` |
 | `errorToast.ts` | `showToastFromError` — surfaces API errors in the host's toast UI | No-op |
 

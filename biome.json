@@ -5,6 +5,9 @@
       "**",
       "!**/node_modules/**",
       "!dist/**",
+      "!.server/**",
+      "!.strategies-store/**",
+      "!src/strategies/server/web-wasm/**",
       "!scripts/**",
       "!.yarn/**",
       "!src/fallbacks/**"

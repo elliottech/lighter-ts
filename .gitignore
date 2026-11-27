@@ -19,3 +19,8 @@ node_modules
 
 .DS_Store
 dist/
+.server/
+.strategies-store/
+src/strategies/server/web-wasm/main.wasm
+src/strategies/server/web-wasm/wasm_exec.js
+.env

@@ -4,18 +4,25 @@
   "categories": {
     "correctness": "error"
   },
-  "ignorePatterns": ["dist/**", "public/**", "scripts/**", ".yarn/**"],
+  "ignorePatterns": [
+    "dist/**",
+    "scripts/**",
+    ".yarn/**",
+    "src/strategies/server/web-wasm/**",
+    "src/strategies/server/*.mjs"
+  ],
   "rules": {
     "import/first": "error",
     "import/newline-after-import": "error",
     "import/no-cycle": "error",
     "import/no-duplicates": "error",
+    "no-duplicate-imports": "error",
     "no-var": "error",
     "prefer-const": "error",
     "prefer-rest-params": "error",
     "prefer-spread": "error",
     "react-hooks/exhaustive-deps": "error",
-    "react-hooks/rules-of-hooks": "warn",
+    "react-hooks/rules-of-hooks": "error",
     "react/immutability": "error",
     "react/incompatible-library": "off",
     "react/preserve-manual-memoization": "error",
@@ -55,7 +62,9 @@
     "typescript/no-unused-vars": [
       "error",
       {
-        "ignoreRestSiblings": true
+        "argsIgnorePattern": "^_",
+        "ignoreRestSiblings": true,
+        "varsIgnorePattern": "^_"
       }
     ],
     "typescript/no-useless-default-assignment": "error",
