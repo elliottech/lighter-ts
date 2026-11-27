@@ -1,6 +1,6 @@
 {
   "name": "lighter-ts",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Lighter Typescript Client SDK",
   "packageManager": "yarn@4.18.0",
   "exports": {
@@ -13,13 +13,16 @@
       "default": "./dist/fallbacks/*/index.js"
     }
   },
+  "bin": {
+    "strategies-server": "dist/strategies-server/launcher.mjs"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "postinstall": "node -e \"require('fs').existsSync('.git')&&require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'])\"",
     "test": "vitest",
-    "build": "rm -rf dist && tsc --emitDeclarationOnly --noCheck && tsup && cpx \"src/**/*.json\" dist && rm -rf dist/strategies/server",
+    "build": "rm -rf dist && tsc --emitDeclarationOnly --noCheck && tsup && cpx \"src/**/*.json\" dist && rm -rf dist/strategies/server && node src/strategies/server/build-strategies-server.mjs dist/strategies-server",
     "build:watch": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src && biome check .",

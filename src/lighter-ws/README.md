@@ -7,7 +7,7 @@ handing messages to state is [`../ws-sub-store`](../ws-sub-store)'s job.
 ## The client
 
 ```ts
-import { LighterWs } from '@elliottech/react-store'
+import { LighterWs } from 'lighter-ts'
 
 const ws = new LighterWs({
   baseUrl: 'wss://…',

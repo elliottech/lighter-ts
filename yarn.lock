@@ -2303,6 +2303,8 @@ __metadata:
     zklighter-perps: ">=1.0.372"
     zod: ">=4.4.3"
     zustand: ">=5.0.13"
+  bin:
+    strategies-server: dist/strategies-server/launcher.mjs
   languageName: unknown
   linkType: soft
 

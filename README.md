@@ -17,18 +17,22 @@ This package ships with no API clients, no storage, no crypto, and no signers.
 The host application injects all of them at boot:
 
 ```ts
-import { initCommonPackage } from '@elliottech/react-store'
+import { createApis, initCommonPackage } from 'lighter-ts'
+import fallbacks from 'lighter-ts/fallbacks/mainnet'
 
 initCommonPackage({
   env: 'mainnet',
+  // this env's snapshot (see src/fallbacks/README.md)
+  fallbacks,
   // storage — localStorage on web, AsyncStorage/MMKV on mobile
   getItem, setItem,
   // crypto — WebCrypto on web, a native module on mobile
   sha256,
-  // generated REST clients from `zklighter-perps`
-  accountApi, orderApi, infoApi, /* ...and the rest */
+  // generated REST clients from `zklighter-perps`, built from one Configuration
+  apiClients: createApis(configuration),
   // transaction signing (WASM on web, native on mobile)
-  signers, getApiKeyIndex, getPlatform, isRegistered,
+  signers, getApiKeyIndex, getPlatform, generateClientOrderIndex, isRegistered,
+  rpcToken,
   // host-side plumbing
   websocketConfigParam, captureException, showToastFromError,
 })

@@ -9,7 +9,7 @@ object.
 `staging` and `testnet` have their own snapshots but take `tokens` from mainnet's,
 and `robinhood-testnet` takes them from `robinhood-mainnet`'s. `local` has only
 mainnet's `tokens` (a `TokensOnlyFallbacks`), so it still waits for the API metas.
-The package exports them as `@elliottech/react-store/fallbacks/<env>`, and the
+The package exports them as `lighter-ts/fallbacks/<env>`, and the
 store itself imports none of them.
 
 Without a matching snapshot, metas, assets and tokens start empty and wait for

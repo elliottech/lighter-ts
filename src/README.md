@@ -17,8 +17,8 @@ This package ships with no API clients, no storage, no crypto, and no signers.
 The host application injects all of them at boot:
 
 ```ts
-import { createApis, initCommonPackage } from '@elliottech/react-store'
-import fallbacks from '@elliottech/react-store/fallbacks/current'
+import { createApis, initCommonPackage } from 'lighter-ts'
+import fallbacks from 'lighter-ts/fallbacks/mainnet'
 
 initCommonPackage({
   env: 'mainnet',
