@@ -7,6 +7,7 @@ export default defineConfig({
     '!src/**/*.d.ts',
     '!src/**/*.test.ts',
     '!src/**/*.test.tsx',
+    '!src/strategies/server/**',
   ],
   outDir: 'dist',
   bundle: false,

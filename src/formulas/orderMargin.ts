@@ -1,17 +1,22 @@
 import { mapValues, partition } from 'lodash-es'
-import { OrderTypeEnum } from 'zklighter-perps'
+import {
+  AccountPositionMarginModeEnum,
+  AccountPositionSignEnum,
+  OrderTriggerStatusEnum,
+} from 'zklighter-perps'
 
 import { errorReporting } from '../lib/errorReporting'
+import type { WsAssetStats } from '../lighter-ws/types/WsMessage'
 import { USDC_ASSET_ID } from '../store/orderbook/selectors'
 import type { AssetBalance, Order, Position } from '../store/types'
 import type { AssetMeta, OrderBookDetail, PerpsOrderBookDetail } from '../types/compatibility'
-import { MarginMode } from '../types/MarginMode'
+import { isMarketSpot } from '../utils/common'
 import { floorNumber } from '../utils/precision'
 
 import { computePositionPnl, marginFractionToPercentage } from './common'
 
-export const doesOrderUseMargin = (order: Pick<Order, 'type' | 'reduce_only'>) =>
-  order.type === OrderTypeEnum.Limit
+export const doesOrderUseMargin = (order: Pick<Order, 'trigger_status'>) =>
+  order.trigger_status === OrderTriggerStatusEnum.Na
 
 export const computeOrderMargin = (order: Order, imf: number) => {
   if (!doesOrderUseMargin(order)) {
@@ -22,10 +27,7 @@ export const computeOrderMargin = (order: Order, imf: number) => {
 }
 
 const computeBuySellSide = (
-  activeOrders: Pick<
-    Order,
-    'is_ask' | 'remaining_base_amount' | 'price' | 'type' | 'reduce_only'
-  >[],
+  activeOrders: Pick<Order, 'is_ask' | 'remaining_base_amount' | 'price' | 'trigger_status'>[],
   isPositionShort: boolean,
 ) => {
   const [sellOrders, buyOrders] = partition(
@@ -50,15 +52,12 @@ const computeBuySellSide = (
 const getOrderMarginsForMarket = (
   imf: number,
   markPrice: number,
-  activeOrders: Pick<
-    Order,
-    'is_ask' | 'remaining_base_amount' | 'price' | 'type' | 'reduce_only'
-  >[],
+  activeOrders: Pick<Order, 'is_ask' | 'remaining_base_amount' | 'price' | 'trigger_status'>[],
   position?: Position,
 ) => {
   const { sameSideOrderValue, oppositeSideOrderValue } = computeBuySellSide(
     activeOrders,
-    position?.sign === -1,
+    position?.sign === AccountPositionSignEnum.Short,
   )
 
   const sameSideOrderMargin = sameSideOrderValue * imf
@@ -70,7 +69,7 @@ const getOrderMarginsForMarket = (
 
   const positionValue = position.position * markPrice
 
-  if (position.margin_mode === MarginMode.CROSS) {
+  if (position.margin_mode === AccountPositionMarginModeEnum.Cross) {
     oppositeSideOrderMargin -= 2 * positionValue * imf
   } else {
     const isolatedTAV = position.allocated_margin + computePositionPnl(position, markPrice)
@@ -89,15 +88,14 @@ export const computeAvailableOrderMargin = (
   positions: Record<string, Position> | undefined,
   activeOrders: Record<
     string,
-    Pick<Order, 'is_ask' | 'remaining_base_amount' | 'price' | 'type' | 'reduce_only'>[]
+    Pick<Order, 'is_ask' | 'remaining_base_amount' | 'price' | 'trigger_status'>[]
   >,
-  assets: Record<string, AssetMeta>,
   assetBalances: Record<string, AssetBalance> | undefined,
-  indexPrices: Record<string, number>,
   tav: number | null,
   imr: number | null,
+  boLockedBalance: number | null,
 ) => {
-  if (tav === null || imr === null || !positions || !assetBalances) {
+  if (tav === null || imr === null || boLockedBalance === null || !positions || !assetBalances) {
     return null
   }
 
@@ -123,29 +121,12 @@ export const computeAvailableOrderMargin = (
     return acc + Math.max(sameSideOrderMargin, oppositeSideOrderMargin)
   }, 0)
 
-  const spotOrderMargin = Object.values(assetBalances).reduce((acc, assetBalance) => {
-    const asset = assets[assetBalance.asset_id]
-    const indexPrice = indexPrices[assetBalance.asset_id] ?? 0
-    const lockedPerpsBalance = Math.max(0, assetBalance.locked_balance - assetBalance.balance)
+  const usdcBalance = assetBalances[USDC_ASSET_ID]
+  const spotOrderMargin = usdcBalance?.margin_mode === 'enabled' ? usdcBalance.locked_balance : 0
 
-    if (!asset) {
-      errorReporting.captureException(new Error('Missing asset meta for asset balance'), {
-        tags: {
-          source: 'computeAvailableOrderMargin',
-          assetId: String(assetBalance.asset_id),
-        },
-      })
-      return acc
-    }
+  const usdcMarginEnabled = assetBalances[USDC_ASSET_ID]?.margin_mode === 'enabled'
 
-    if (assetBalance.margin_mode === 'disabled') {
-      return acc
-    }
-
-    return acc + lockedPerpsBalance * indexPrice * Number(asset.loan_to_value)
-  }, 0)
-
-  return tav - imr - orderMargin - spotOrderMargin
+  return tav - imr - orderMargin - spotOrderMargin - (usdcMarginEnabled ? boLockedBalance : 0)
 }
 
 export const computePositionMarginOffset = (
@@ -168,7 +149,7 @@ export const computePositionOrderMarginOffset = (
     return 0
   }
 
-  const isPositionShort = position?.sign === -1
+  const isPositionShort = position?.sign === AccountPositionSignEnum.Short
 
   const { sameSideOrderMargin, oppositeSideOrderMargin } = getOrderMarginsForMarket(
     marginFractionToPercentage(imf),
@@ -207,6 +188,7 @@ export const computeAvailableBalancesToTransfer = (
   assetBalances: Record<string, AssetBalance> | undefined,
   indexPrices: Record<string, number>,
   availableOrderMargin: number | null,
+  boLockedBalance: number | null,
 ) => {
   if (!assetBalances) {
     return null
@@ -227,7 +209,13 @@ export const computeAvailableBalancesToTransfer = (
     }
 
     if (assetBalance.margin_mode === 'disabled') {
-      return floorNumber(assetBalance.available_balance, asset.size_decimals)
+      const boLock = Number(assetBalance.asset_id) === USDC_ASSET_ID ? boLockedBalance : 0
+
+      if (boLock === null) {
+        return null
+      }
+
+      return floorNumber(Math.max(0, assetBalance.available_balance - boLock), asset.size_decimals)
     }
 
     if (availableOrderMargin === null || !indexPrice) {
@@ -271,7 +259,7 @@ export const computeAvailableMarginForLimitOrders = (
     return null
   }
 
-  if (position?.margin_mode === MarginMode.ISOLATED) {
+  if (position?.margin_mode === AccountPositionMarginModeEnum.Isolated) {
     return floorNumber(
       positionOrderMarginOffset +
         Math.max(
@@ -300,7 +288,7 @@ export const computeAvailableMarginForMarketOrders = (
   }
 
   // you can always trade your existing position if you're reducing it first
-  if (position?.margin_mode === MarginMode.ISOLATED) {
+  if (position?.margin_mode === AccountPositionMarginModeEnum.Isolated) {
     return floorNumber(
       positionMarginOffset +
         Math.max(0, Math.min(tav - imr, assetBalances[USDC_ASSET_ID]?.margin_balance ?? 0)),
@@ -331,7 +319,43 @@ export const computeAvailableToDemarginize = (
   )
 }
 
-// This can use the available to withdraw but with an extra floor as the market has less precision than the asset
+export type AutoSupplyCredit = {
+  creditPerUnit: number
+  maxUnits: number
+}
+
+export const NO_AUTO_SUPPLY_CREDIT: AutoSupplyCredit = { creditPerUnit: 0, maxUnits: 0 }
+
+export const computeSpotBuyAutoSupplyCredit = (
+  currentMarket: OrderBookDetail,
+  assetMetas: Record<string, AssetMeta>,
+  assetBalances: Record<string, AssetBalance>,
+  assetsStats: Record<string, WsAssetStats>,
+): AutoSupplyCredit => {
+  if (!isMarketSpot(currentMarket)) {
+    return NO_AUTO_SUPPLY_CREDIT
+  }
+
+  const baseAsset = assetMetas[currentMarket.base_asset_id]
+  const baseBalance = assetBalances[currentMarket.base_asset_id]
+  const baseStats = assetsStats[currentMarket.base_asset_id]
+
+  if (!baseAsset || !baseStats || baseBalance?.margin_mode !== 'enabled') {
+    return NO_AUTO_SUPPLY_CREDIT
+  }
+
+  const creditPerUnit = baseStats.index_price * Number(baseAsset.loan_to_value)
+  const maxUnits = Math.max(
+    0,
+    Math.min(
+      Number(baseAsset.user_supply_cap) - baseBalance.margin_balance,
+      Number(baseAsset.global_supply_cap) - baseStats.total_supplied,
+    ),
+  )
+
+  return { creditPerUnit, maxUnits }
+}
+
 export const computeSpotAvailableToTradeMarket = (
   asset: AssetMeta | undefined,
   assetBalances: Record<string, AssetBalance> | undefined,
@@ -354,6 +378,10 @@ export const computeSpotAvailableToTradeMarket = (
 
   if (assetBalance.margin_mode === 'disabled') {
     return floorNumber(Math.max(0, assetBalance.balance), decimals)
+  }
+
+  if (isShort && assetBalance.asset_id !== USDC_ASSET_ID) {
+    return floorNumber(Math.max(0, assetBalance.balance + assetBalance.margin_balance), decimals)
   }
 
   if (tav === null || imr === null || !indexPrice) {
@@ -380,6 +408,7 @@ export const computeSpotAvailableToTradeLimit = (
   indexPrice: number | undefined,
   isShort: boolean,
   availableOrderMargin: number | null,
+  boLockedBalance: number | null,
 ) => {
   if (!asset || !assetBalances) {
     return null
@@ -394,17 +423,32 @@ export const computeSpotAvailableToTradeLimit = (
   const decimals = isShort ? currentMarket.size_decimals : currentMarket.price_decimals
 
   if (assetBalance.margin_mode === 'disabled') {
-    return floorNumber(assetBalance.available_balance, decimals)
+    const boLock = Number(assetBalance.asset_id) === USDC_ASSET_ID ? boLockedBalance : 0
+
+    if (boLock === null) {
+      return null
+    }
+
+    return floorNumber(Math.max(0, assetBalance.available_balance - boLock), decimals)
   }
 
-  if (availableOrderMargin === null || !indexPrice) {
+  if (isShort && assetBalance.asset_id !== USDC_ASSET_ID) {
+    return floorNumber(
+      assetBalance.available_balance + assetBalance.available_margin_balance,
+      decimals,
+    )
+  }
+
+  const boLock = Number(assetBalance.asset_id) === USDC_ASSET_ID ? boLockedBalance : 0
+
+  if (availableOrderMargin === null || !indexPrice || boLock === null) {
     return null
   }
 
   const availablePerpsBalance = Math.max(
     0,
     Math.min(
-      assetBalance.available_margin_balance,
+      assetBalance.available_margin_balance - boLock,
       availableOrderMargin / indexPrice / Number(asset.loan_to_value),
     ),
   )

@@ -1,27 +1,36 @@
 import { create } from 'zustand'
+import { mapValues } from 'lodash-es'
 import type { Encoding, LighterWsInterface } from '../lighter-ws/types/LighterWs'
 import { MAX_WS_CHANNEL_SUBSCRIBE_RETRIES, type ChannelStatus } from './channels'
 import {
   type WsMessage,
   type WsNotification as WsNotificationType,
 } from '../lighter-ws/types/WsMessage'
+import { fallbackData } from '../fallbacks'
 import { useLighterStore } from '../store/useLighterStore'
 import { getCandleKey } from '../utils/candlesticks'
 import LighterWs from '../lighter-ws/LighterWs'
 import { websocketConfig } from './websocketConfig'
 import {
   appendAgentExchange,
+  applyPublicAssetBalances,
   clearAgentThread,
+  clearBufferedAccountUpdates,
   clearBufferedCandlesticksForKey,
   failInFlightAgentExchanges,
+  getSubscribedChannelKey,
   handleChangeDesiredMarket,
   handleWsMessage,
+  isWsMessageForSubscribedChannel,
+  markOrderBookStale,
   newAgentExchangeId,
   patchInFlightAgentExchanges,
 } from './utils'
+import { apis } from '../lib/apis'
 import { errorReporting } from '../lib/errorReporting'
-import { isRobinhoodEnv } from '../lib/env'
+import { isLivePointsEnabled } from '../lib/env'
 import { wsChannelReconnectTimeout } from '../lighter-ws/utils/wsChannelReconnectTimeout'
+import { type UpDownResolution, getUpDownCandleChannel } from './upDownPrice'
 
 export interface WsSubStore {
   marketId: number | null
@@ -29,6 +38,7 @@ export interface WsSubStore {
   publicPoolIndex: number
   stakingPoolIndex: number
   isAuthenticated: boolean
+  isGhost: boolean
   ws: LighterWsInterface | null
   wsLoading: boolean
   wsSessionId?: string
@@ -39,6 +49,17 @@ export interface WsSubStore {
   candleSubscriptions: Record<string, { marketId: number; obResolution: string; refCount: number }>
   // Candle channels currently open on the websocket, used to diff on sync.
   activeCandleChannels: string[]
+  upDownPriceSubscriptions: Record<
+    string,
+    {
+      channel: string
+      symbol: string
+      duration: number
+      resolution: UpDownResolution
+      refCount: number
+    }
+  >
+  activeUpDownPriceSubscriptions: Record<string, true>
   actions: {
     logout: () => void
     init: (
@@ -47,6 +68,7 @@ export interface WsSubStore {
       getOrCreateAuthToken: () => Promise<{ token: string } | undefined>,
       encoding: Encoding,
       customServer: string | null,
+      onMessage?: (data: WsMessage) => void,
     ) => Promise<void>
     ping: () => void
     forceClose: () => void
@@ -57,6 +79,9 @@ export interface WsSubStore {
     subscribeCandle: (marketId: number, obResolution: string) => void
     unsubscribeCandle: (marketId: number, obResolution: string) => void
     syncSharedCandleSubscription: () => void
+    subscribeUpDownPrice: (symbol: string, duration: number, resolution: UpDownResolution) => void
+    unsubscribeUpDownPrice: (symbol: string, duration: number, resolution: UpDownResolution) => void
+    syncUpDownPriceSubscriptions: () => void
     subscribePublicPool: (publicPoolIndex: number, options?: { skipTrades?: boolean }) => void
     unsubscribePublicPool: (publicPoolIndex: number, options?: { skipTrades?: boolean }) => void
     subscribeStakingPool: (stakingPoolIndex: number) => void
@@ -72,6 +97,7 @@ export interface WsSubStore {
       isAuthenticated: boolean,
       waitForWasm: () => Promise<unknown>,
       getOrCreateAuthToken: (accountIndex: number) => Promise<{ token: string } | undefined>,
+      isGhost?: boolean,
     ) => void
     subscribeChannel: (msg: {
       type: 'subscribe'
@@ -107,6 +133,7 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
   publicPoolIndex: 0,
   stakingPoolIndex: 0,
   isAuthenticated: false,
+  isGhost: false,
   ws: null,
   wsLoading: false,
   wsSessionId: undefined,
@@ -115,8 +142,17 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
   lastPongTime: null,
   candleSubscriptions: {},
   activeCandleChannels: [],
+  upDownPriceSubscriptions: {},
+  activeUpDownPriceSubscriptions: {},
   actions: {
-    init: async (url, triggerWsNotification, getOrCreateAuthToken, encoding, customServer) => {
+    init: async (
+      url,
+      triggerWsNotification,
+      getOrCreateAuthToken,
+      encoding,
+      customServer,
+      onMessage,
+    ) => {
       const { actions } = get()
       if (get().ws || get().wsLoading) {
         return
@@ -124,7 +160,10 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
 
       set({ wsLoading: true, channels: {} })
 
-      const authToken = await getOrCreateAuthToken()
+      const [authToken] = await Promise.all([
+        getOrCreateAuthToken().catch(() => undefined),
+        fallbackData.ready,
+      ])
       new LighterWs({
         baseUrl: url,
         encoding,
@@ -140,8 +179,12 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
 
           actions.subscribeChannel(MSG.SUBSCRIBE_PERPS_MARKETS_STATS(websocketConfig.flushInterval))
           actions.subscribeChannel(MSG.SUBSCRIBE_SPOT_MARKETS_STATS(websocketConfig.flushInterval))
+          if (websocketConfig.boEnabled) {
+            actions.subscribeChannel(MSG.SUBSCRIBE_BO_MARKETS_STATS(websocketConfig.flushInterval))
+          }
           actions.subscribeChannel(MSG.SUBSCRIBE_ASSET_STATS(websocketConfig.flushInterval))
           actions.syncSharedCandleSubscription()
+          actions.syncUpDownPriceSubscriptions()
         },
         onClose: () => {
           set({
@@ -152,12 +195,16 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
             publicPoolIndex: 0,
             stakingPoolIndex: 0,
             isAuthenticated: false,
+            isGhost: false,
             lastPingTime: null,
             lastPongTime: null,
             activeCandleChannels: [],
+            activeUpDownPriceSubscriptions: {},
           })
 
           failInFlightAgentExchanges()
+          clearBufferedAccountUpdates()
+          markOrderBookStale()
 
           const { channels } = get()
           Object.values(channels).forEach((channel) => {
@@ -178,10 +225,14 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
           if (message.type === 'connected') {
             set({ wsSessionId: message.session_id })
           }
+          if (!isWsMessageForSubscribedChannel(message, get().channels)) {
+            return
+          }
           if ('channel' in message && message.type.startsWith('subscribed')) {
             actions.markAsSubscribed(message.channel)
           }
           handleWsMessage(message, triggerWsNotification)
+          onMessage?.(message)
         },
         onError: (err: unknown, tags: unknown) => {
           errorReporting.captureException(err, { tags })
@@ -207,12 +258,16 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
         publicPoolIndex: 0,
         stakingPoolIndex: 0,
         isAuthenticated: false,
+        isGhost: false,
         lastPingTime: null,
         lastPongTime: null,
         activeCandleChannels: [],
+        activeUpDownPriceSubscriptions: {},
       })
 
       failInFlightAgentExchanges()
+      clearBufferedAccountUpdates()
+      markOrderBookStale()
 
       const { channels } = get()
       Object.values(channels).forEach((channel) => {
@@ -325,12 +380,76 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
 
       set({ activeCandleChannels: Array.from(desiredChannels) })
     },
+    subscribeUpDownPrice: (symbol, duration, resolution) => {
+      if (!websocketConfig.boEnabled || !(duration > 0)) return
+
+      const channel = getUpDownCandleChannel(symbol, duration, resolution)
+      set((prev) => {
+        const existing = prev.upDownPriceSubscriptions[channel]
+        return {
+          upDownPriceSubscriptions: {
+            ...prev.upDownPriceSubscriptions,
+            [channel]: existing
+              ? { ...existing, refCount: existing.refCount + 1 }
+              : {
+                  channel,
+                  symbol: symbol.toUpperCase(),
+                  duration,
+                  resolution,
+                  refCount: 1,
+                },
+          },
+        }
+      })
+      get().actions.syncUpDownPriceSubscriptions()
+    },
+    unsubscribeUpDownPrice: (symbol, duration, resolution) => {
+      const channel = getUpDownCandleChannel(symbol, duration, resolution)
+      set((prev) => {
+        const existing = prev.upDownPriceSubscriptions[channel]
+        if (!existing) return {}
+
+        const nextSubscriptions = { ...prev.upDownPriceSubscriptions }
+        if (existing.refCount <= 1) {
+          delete nextSubscriptions[channel]
+        } else {
+          nextSubscriptions[channel] = { ...existing, refCount: existing.refCount - 1 }
+        }
+        return { upDownPriceSubscriptions: nextSubscriptions }
+      })
+      get().actions.syncUpDownPriceSubscriptions()
+    },
+    syncUpDownPriceSubscriptions: () => {
+      const { ws, actions, upDownPriceSubscriptions, activeUpDownPriceSubscriptions } = get()
+
+      if (!ws) return
+
+      Object.keys(activeUpDownPriceSubscriptions).forEach((channel) => {
+        if (!upDownPriceSubscriptions[channel]?.refCount) {
+          actions.unsubscribeChannel({ type: 'unsubscribe' as const, channel })
+        }
+      })
+
+      Object.keys(upDownPriceSubscriptions).forEach((channel) => {
+        if (!activeUpDownPriceSubscriptions[channel]) {
+          actions.subscribeChannel({
+            type: 'subscribe' as const,
+            channel,
+          })
+        }
+      })
+
+      set({
+        activeUpDownPriceSubscriptions: mapValues(upDownPriceSubscriptions, () => true),
+      })
+    },
     subscribePublicPool: (publicPoolIndex, { skipTrades = false } = {}) => {
       const {
         publicPoolIndex: currentPublicPoolIndex,
         actions,
         accountIndex,
         isAuthenticated,
+        isGhost,
       } = get()
 
       if (currentPublicPoolIndex === publicPoolIndex) {
@@ -338,29 +457,36 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
       }
 
       const isOwnerAndAuthed = accountIndex === publicPoolIndex && isAuthenticated
+      // A ghost account already streams its own positions and trades.
+      const isGhostOwner = accountIndex === publicPoolIndex && isGhost
 
       actions.subscribeChannel(MSG.SUBSCRIBE_POOL_INFO(publicPoolIndex))
 
       if (!isOwnerAndAuthed) {
-        actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_POSITIONS(publicPoolIndex, undefined, 2000))
+        if (!isGhostOwner) {
+          actions.subscribeChannel(
+            MSG.SUBSCRIBE_ACCOUNT_POSITIONS(publicPoolIndex, undefined, 2000),
+          )
+        }
         actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_ASSETS(publicPoolIndex))
         // pool accounts are exempt from auth on this channel server-side;
         // needed for per-asset spot PnL on the pool page
         actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_SPOT_AVG_ENTRY_PRICES(publicPoolIndex))
 
-        if (!skipTrades) {
+        if (!skipTrades && !isGhostOwner) {
           actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_TRADES(publicPoolIndex))
         }
       }
 
       set({ publicPoolIndex })
     },
-    unsubscribePublicPool: (publicPoolIndex, { skipTrades = false } = {}) => {
+    unsubscribePublicPool: (publicPoolIndex) => {
       const {
         publicPoolIndex: currentPublicPoolIndex,
         actions,
         accountIndex,
         isAuthenticated,
+        isGhost,
       } = get()
 
       if (currentPublicPoolIndex !== publicPoolIndex) {
@@ -368,15 +494,19 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
       }
 
       const isOwnerAndAuthed = accountIndex === publicPoolIndex && isAuthenticated
+      // A ghost account already streams its own positions and trades.
+      const isGhostOwner = accountIndex === publicPoolIndex && isGhost
 
       actions.unsubscribeChannel(MSG.UNSUBSCRIBE_POOL_INFO(publicPoolIndex))
 
       if (!isOwnerAndAuthed) {
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_POSITIONS(publicPoolIndex))
+        if (!isGhostOwner) {
+          actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_POSITIONS(publicPoolIndex))
+        }
         actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_ASSETS(publicPoolIndex))
         actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_SPOT_AVG_ENTRY_PRICES(publicPoolIndex))
 
-        if (!skipTrades) {
+        if (!isGhostOwner) {
           actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_TRADES(publicPoolIndex))
         }
       }
@@ -429,7 +559,7 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
     },
     subscribeLivePoints: (accountIndex, auth) => {
       const { ws, actions } = get()
-      if (!ws || !isRobinhoodEnv()) return
+      if (!ws || !isLivePointsEnabled()) return
       try {
         actions.subscribeChannel(MSG.SUBSCRIBE_LIVE_POINTS(accountIndex, auth))
       } catch (e) {
@@ -476,6 +606,7 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
         error: null,
         id,
         question,
+        responseMs: null,
         status: 'sending',
       })
 
@@ -497,28 +628,30 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
       }
     },
     clearAgentExchanges: (accountIndex) => clearAgentThread(accountIndex),
-    switchAccount: (newAccountIndex, newIsAuthenticated, waitForWasm, getOrCreateAuthToken) => {
-      const { ws, accountIndex, isAuthenticated, actions } = get()
+    switchAccount: (
+      newAccountIndex,
+      newIsAuthenticated,
+      waitForWasm,
+      getOrCreateAuthToken,
+      newIsGhost = false,
+    ) => {
+      const { ws, accountIndex, isAuthenticated, isGhost, actions } = get()
 
       if (!ws) {
         return
       }
 
       // No need to switch account if it's already the same
-      if (accountIndex === newAccountIndex && isAuthenticated === newIsAuthenticated) {
+      if (
+        accountIndex === newAccountIndex &&
+        isAuthenticated === newIsAuthenticated &&
+        isGhost === newIsGhost
+      ) {
         return
       }
 
       if (accountIndex) {
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_TRANSACTIONS(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_ORDERS(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_POSITIONS(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_TRADES(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_NOTIFICATION(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_ASSETS(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_SPOT_AVG_ENTRY_PRICES(accountIndex))
-        actions.unsubscribeChannel(MSG.UNSUBSCRIBE_RFQS())
-        actions.unsubscribeAgent(accountIndex)
+        unsubscribeAccountChannels(actions, accountIndex)
       }
 
       if (newAccountIndex) {
@@ -527,6 +660,9 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
             try {
               const t = await getOrCreateAuthToken(newAccountIndex)
               if (!t) throw new Error('Could not get auth token')
+              // A logout or another switch may have landed while the token was pending.
+              const current = get()
+              if (current.accountIndex !== newAccountIndex || !current.isAuthenticated) return
               actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_TRANSACTIONS(newAccountIndex, t.token))
               actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_ORDERS(newAccountIndex, t.token))
               actions.subscribeChannel(MSG.SUBSCRIBE_ACCOUNT_POSITIONS(newAccountIndex, t.token))
@@ -546,10 +682,25 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
               })
             }
           })
+        } else if (newIsGhost) {
+          for (const msg of [
+            MSG.SUBSCRIBE_ACCOUNT_POSITIONS(newAccountIndex),
+            MSG.SUBSCRIBE_ACCOUNT_TRADES(newAccountIndex),
+          ]) {
+            if (!get().channels[msg.channel]) actions.subscribeChannel(msg)
+          }
         }
       }
 
-      set({ accountIndex: newAccountIndex, isAuthenticated: newIsAuthenticated })
+      set({
+        accountIndex: newAccountIndex,
+        isAuthenticated: newIsAuthenticated,
+        isGhost: newIsGhost,
+      })
+
+      if (newAccountIndex && newIsGhost) {
+        pollGhostAssetBalances(newAccountIndex, ++ghostAssetsPollId)
+      }
     },
     subscribeChannel: (msg) => {
       const { ws, channels, actions } = get()
@@ -574,14 +725,16 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
       ws.sendMessage(msg)
     },
     markAsSubscribed: (channel) => {
-      channel = channel.replace(/:/g, '/')
+      channel = getSubscribedChannelKey(channel)
       const { channels } = get()
-      clearInterval(channels[channel]?.timeout ?? undefined)
+      const status = channels[channel]
+      if (!status) return
+      clearInterval(status.timeout ?? undefined)
       set({
         channels: {
           ...channels,
           [channel]: {
-            retries: channels[channel]?.retries ?? 1,
+            retries: status.retries,
             timeout: null,
           },
         },
@@ -598,13 +751,25 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
       ws.sendMessage(msg)
     },
     logout() {
+      const { ws, accountIndex, actions, publicPoolIndex, isAuthenticated } = get()
+      if (ws && accountIndex) {
+        unsubscribeAccountChannels(actions, accountIndex)
+      }
+      set({ accountIndex: 0, isAuthenticated: false, isGhost: false })
+      const leavingAccountIndex = useLighterStore.getState().accountIndex
+      // An open pool page keeps streaming this account, and no new snapshot would restore it.
+      const isPoolPageOpen = !isAuthenticated && publicPoolIndex === leavingAccountIndex
+      if (!isPoolPageOpen) {
+        // Drop the leaving account's queued ws updates so they cannot re-create it after removal.
+        clearBufferedAccountUpdates(leavingAccountIndex)
+      }
       useLighterStore.setState((state) => {
         const { [state.accountIndex]: _toBeDeleted, ...restAccounts } = state.accounts
 
         return {
           ...state,
           accountIndex: 0,
-          accounts: restAccounts,
+          accounts: isPoolPageOpen ? state.accounts : restAccounts,
           agentThreads: {},
           isAuthenticated: false,
         }
@@ -612,6 +777,60 @@ export const useWsSubStore = create<WsSubStore>((set, get) => ({
     },
   },
 }))
+
+const GHOST_ASSETS_POLL_INTERVAL_MS = 10_000
+let ghostAssetsPollId = 0
+
+// account_all_assets needs auth for non-pool accounts, so a ghost account's
+// balances come from the public account endpoint instead.
+const pollGhostAssetBalances = async (accountIndex: number, pollId: number) => {
+  const isCurrentPoll = () => {
+    const { accountIndex: current, isGhost } = useWsSubStore.getState()
+    return pollId === ghostAssetsPollId && isGhost && current === accountIndex
+  }
+
+  if (!isCurrentPoll()) return
+
+  const isStreamed = () =>
+    !!useWsSubStore.getState().channels[MSG.SUBSCRIBE_ACCOUNT_ASSETS(accountIndex).channel]
+
+  if (isStreamed()) {
+    setTimeout(() => pollGhostAssetBalances(accountIndex, pollId), GHOST_ASSETS_POLL_INTERVAL_MS)
+    return
+  }
+
+  try {
+    const { accounts } = await apis.accountApi.account({ by: 'index', value: `${accountIndex}` })
+    const account = accounts.find(({ index }) => index === accountIndex)
+    if (account && isCurrentPoll() && !isStreamed()) {
+      applyPublicAssetBalances(accountIndex, account.assets)
+    }
+  } catch (e) {
+    errorReporting.captureException(e, { tags: { accountIndex, type: 'ghost_asset_balances' } })
+  }
+
+  if (isCurrentPoll()) {
+    setTimeout(() => pollGhostAssetBalances(accountIndex, pollId), GHOST_ASSETS_POLL_INTERVAL_MS)
+  }
+}
+
+const unsubscribeAccountChannels = (actions: WsSubStore['actions'], accountIndex: number) => {
+  const { isAuthenticated, publicPoolIndex } = useWsSubStore.getState()
+  // An open pool page for this account owns its public streams until it unsubscribes them.
+  const isPoolPageOpen = publicPoolIndex === accountIndex && !isAuthenticated
+
+  actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_TRANSACTIONS(accountIndex))
+  actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_ORDERS(accountIndex))
+  actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_NOTIFICATION(accountIndex))
+  if (!isPoolPageOpen) {
+    actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_POSITIONS(accountIndex))
+    actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_TRADES(accountIndex))
+    actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_ASSETS(accountIndex))
+    actions.unsubscribeChannel(MSG.UNSUBSCRIBE_ACCOUNT_SPOT_AVG_ENTRY_PRICES(accountIndex))
+  }
+  actions.unsubscribeChannel(MSG.UNSUBSCRIBE_RFQS())
+  actions.unsubscribeAgent(accountIndex)
+}
 
 const MSG = {
   SUBSCRIBE_ACCOUNT_ASSETS: (account: number, auth?: string) => ({
@@ -711,6 +930,7 @@ const MSG = {
   SUBSCRIBE_PERPS_MARKETS_STATS: (flushInterval?: number) => ({
     type: 'subscribe' as const,
     channel: 'market_stats/all',
+    partial: true,
     ...(typeof flushInterval === 'number' ? { flush_interval: flushInterval.toFixed(0) } : {}),
   }),
   UNSUBSCRIBE_PERPS_MARKETS_STATS: () => ({
@@ -720,11 +940,22 @@ const MSG = {
   SUBSCRIBE_SPOT_MARKETS_STATS: (flushInterval?: number) => ({
     type: 'subscribe' as const,
     channel: 'spot_market_stats/all',
+    partial: true,
     ...(typeof flushInterval === 'number' ? { flush_interval: flushInterval.toFixed(0) } : {}),
   }),
   UNSUBSCRIBE_SPOT_MARKETS_STATS: () => ({
     type: 'unsubscribe' as const,
     channel: 'spot_market_stats/all',
+  }),
+  SUBSCRIBE_BO_MARKETS_STATS: (flushInterval?: number) => ({
+    type: 'subscribe' as const,
+    channel: 'bo_market_stats/all',
+    partial: true,
+    ...(typeof flushInterval === 'number' ? { flush_interval: flushInterval.toFixed(0) } : {}),
+  }),
+  UNSUBSCRIBE_BO_MARKETS_STATS: () => ({
+    type: 'unsubscribe' as const,
+    channel: 'bo_market_stats/all',
   }),
   SUBSCRIBE_ASSET_STATS: (flushInterval?: number) => ({
     type: 'subscribe' as const,
@@ -779,10 +1010,33 @@ const MSG = {
   }),
 }
 
-// Mark-price preference flips candle channels between candle <-> mark_price_candle.
+// Converted pending/published candles belong to the old price mode. Clear once
+// at the shared wire owner, before any chart can seed replacement history.
 useLighterStore.subscribe(
-  (state) => state.preferences.showMarkPriceCandles,
+  (state) => `${state.preferences.showRawPrices}/${state.preferences.showMarkPriceCandles}`,
   () => {
-    useWsSubStore.getState().actions.syncSharedCandleSubscription()
+    const { actions, candleSubscriptions } = useWsSubStore.getState()
+    for (const sub of Object.values(candleSubscriptions))
+      if (sub.refCount > 0)
+        clearBufferedCandlesticksForKey(getCandleKey(sub.marketId, sub.obResolution))
+    // Mark flips channels; Raw keeps the same channel but still invalidates data.
+    actions.syncSharedCandleSubscription()
+  },
+)
+
+// The book survives a reconnect so its panel never drops back to a skeleton
+// after the first snapshot; markOrderBookStale blocks submits until the
+// resubscribe snapshot replaces it in place. A market switch while the socket
+// is down never reaches subscribeMarket, so drop the previous market's book
+// here rather than price the new market from it, and let the next
+// subscribeMarket re-arm the market. marketId is the market the held book came
+// from; with none there is nothing to drop.
+useLighterStore.subscribe(
+  (state) => state.currentMarketId,
+  (currentMarketId) => {
+    const { ws, marketId } = useWsSubStore.getState()
+    if (ws || marketId === null || marketId === currentMarketId) return
+    handleChangeDesiredMarket(currentMarketId)
+    useWsSubStore.setState({ marketId: null })
   },
 )

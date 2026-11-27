@@ -135,6 +135,7 @@ export type CreateClientParams = {
   nonce: number
   apiKeyIndex: number
   skipNonce?: boolean
+  expiredAt?: number
 }
 
 export type CreateClientResult = { pk: string; prv: string; body: string }
@@ -143,6 +144,7 @@ export type PubKeyTransactionParams = {
   accountIndex: number
   nonce: number
   apiKeyIndex: number
+  expiredAt?: number
 }
 
 export type PubKeyTransaction = { pk: string; body: string }
@@ -152,6 +154,7 @@ export type PubKeySignParams = {
   signature: string
   nonce: number
   apiKeyIndex: number
+  expiredAt?: number
 }
 
 export type CreateAuthTokenParams = {
@@ -160,6 +163,11 @@ export type CreateAuthTokenParams = {
 }
 
 export type AuthToken = { token: string; deadline: number }
+
+export type StrategyServerCommandParams = {
+  accountIndex: number
+  payload: string
+}
 
 export type AirdropAllocationParams = {
   accountIndex: number
@@ -245,6 +253,7 @@ export interface Signers {
 
   createClient: (params: CreateClientParams) => Promise<CreateClientResult>
   createAuthToken: (params: CreateAuthTokenParams) => Promise<AuthToken>
+  signStrategyServerCommand: (params: StrategyServerCommandParams) => Promise<{ signature: string }>
   getChangePubKeyTransaction: (params: PubKeyTransactionParams) => Promise<PubKeyTransaction>
   getRevokePubKeyTransaction: (params: PubKeyTransactionParams) => Promise<PubKeyTransaction>
   signChangePubKey: (params: PubKeySignParams) => Promise<TxResponse>

@@ -19,6 +19,7 @@ export enum TxTypes {
   TxTypeL2UpdateAccountConfig = 41,
   TxTypeL2UpdateAccountAssetConfig = 42,
   TxTypeL2ApproveIntegrator = 45,
+  TxTypeL2ChangeECDSAPubKey = 54,
 }
 
 export enum TxOrderTypes {

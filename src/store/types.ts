@@ -19,6 +19,7 @@ import type {
   WsSpotAvgEntryPrice,
   WsAssetBalance,
   WsPosition,
+  WsBOPosition,
   WsRfq,
   WsTrade,
 } from '../lighter-ws/types'
@@ -27,6 +28,7 @@ import type {
 export type Trade = WsTrade
 export type OrderbookItem = WsOrderbookItem
 export type Position = WsPosition
+export type BOPosition = WsBOPosition
 export type AssetBalance = WsAssetBalance
 export type SpotAvgEntryPrice = WsSpotAvgEntryPrice
 export type Share = WsShare
@@ -44,16 +46,17 @@ export type Tx = WsTx
 export type Account = {
   trades?: Record<string, Trade[]>
   positions?: Record<string, Position>
+  boPositions?: Record<string, BOPosition>
   assetBalances?: Record<string, AssetBalance>
   spotAvgEntryPrices?: Record<string, SpotAvgEntryPrice>
   activeOrders?: Record<string, Order[]>
   inactiveOrders?: Record<string, Order[]>
+  boTrades?: Record<string, Trade[]>
+  boActiveOrders?: Record<string, Order[]>
+  boInactiveOrders?: Record<string, Order[]>
   shares?: Share[]
   rfqs?: Record<string, Record<string, Rfq>>
   totalVolume?: number
-  monthlyVolume?: number
-  weeklyVolume?: number
-  dailyVolume?: number
   poolInfo?: PoolInfo
   livePoints?: number
 }
@@ -109,6 +112,7 @@ export type DetailedAccount = Omit<
   | 'shares'
   | 'pending_unlocks'
   | 'pool_info'
+  | 'bo_positions'
 > & {
   available_balance: number
   collateral: number
@@ -122,6 +126,7 @@ export type DetailedAccount = Omit<
   pending_unlocks?: PendingUnlock[]
   // the API omits pool_info for non-pool accounts even though codegen marks it required
   pool_info?: PublicPoolInfo
+  bo_positions?: BOPosition[]
 }
 export type PositionFunding = Omit<
   CodegenedPositionFunding,
@@ -136,14 +141,6 @@ export type Liquidation = Omit<CodegenedLiquidation, 'info'> & {
   info: Omit<CodegenedLiquidation['info'], 'positions'> & {
     positions: Position[]
   }
-}
-
-export enum SubAccountType {
-  Main = 0,
-  Sub = 1,
-  Public = 2,
-  LighterPublic = 3,
-  Staking = 4,
 }
 
 export enum RouteType {

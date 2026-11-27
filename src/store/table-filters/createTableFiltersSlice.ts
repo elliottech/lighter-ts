@@ -15,7 +15,6 @@ export interface TableFiltersSlice {
     orderType: OrderTypeEnum | 'all'
     tradeType: TradeTypeEnum | 'all'
     role: TradesRoleEnum
-    aggregateByOrder: boolean
     transferHistoryType: TransferHistoryTypeEnum | 'all'
     marketType: TradesMarketTypeEnum
   }
@@ -27,7 +26,6 @@ export const DEFAULT_TABLE_FILTERS = {
   orderType: 'all',
   tradeType: 'all',
   role: 'all',
-  aggregateByOrder: false,
   transferHistoryType: 'all',
   marketType: 'all',
 } as const

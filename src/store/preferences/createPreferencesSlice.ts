@@ -18,8 +18,10 @@ import {
   TOKEN_CATEGORY_ORDER,
 } from '../../types/tokenlist'
 import { TIMELINES, type Timeline } from '../../utils/filters'
+import { BO_DEFAULT_PRICE_TOLERANCE_CENTS, BO_MAX_PRICE_TOLERANCE_CENTS } from '../../utils/bo'
 import { persistence } from '../../lib/persistence'
 import type { RfqOrderBookSnapshot } from '../types'
+import { errorReporting } from '../../lib/errorReporting'
 
 const orderBookMultiplierSchema = z
   .union([z.literal(1), z.literal(10), z.literal(100), z.literal(1000), z.literal(10000)])
@@ -46,6 +48,7 @@ const defaultPublicPoolsSortingState = [{ id: 'tvl', desc: true }]
 const defaultMarketsRiskSortingState = [{ id: 'openInterestCap', desc: true }]
 
 export const defaultPreferences = {
+  aggregateByOrder: false,
   showRawPrices: false,
   showMarkPriceCandles: false,
   showBuySellMarks: true,
@@ -54,6 +57,7 @@ export const defaultPreferences = {
   showLiquidationLine: true,
   showMarkPriceChartLine: false,
   isAmountInBase: true,
+  isOrderBookAmountInBase: true,
   postOnly: false,
   orderDirection: OrderDirections.Long,
   dismissedClaimAmounts: {},
@@ -80,7 +84,10 @@ export const defaultPreferences = {
   tableSortingMarketRisk: defaultMarketsRiskSortingState,
   maxSlippage: DEFAULT_MARKET_ORDER_SLIPPAGE,
   maxSLTPSlippage: DEFAULT_SLTP_ORDER_SLIPPAGE,
+  boPriceTolerance: BO_DEFAULT_PRICE_TOLERANCE_CENTS,
   conditionalLimitPrefill: true,
+  isRfqTabSelected: false,
+  showRfqSuggestions: true,
   orderType: OrderType.Market,
   closePositionOrderType: OrderType.Market,
   depositCapNotificationDismissed: false,
@@ -100,12 +107,17 @@ export const defaultPreferences = {
   publicPoolChartDateSelection: '1w' as Timeline,
   stakingPoolChartDateSelection: '1w' as Timeline,
   inviteToastDismissed: false,
+  dismissedPaidActionFeeTerms: false,
+  paidActionPlusUpsellPromptedAt: null as number | null,
   slWorseThanLiqToastDismissedAt: 0,
+  walletUpgradePromptedAt: {} as Record<string, number>,
   showWithdrawalSurvey: true,
   seenFeatureHighlight: '',
   lastAnnouncementDismissed: 1771086060,
   dismissedMarketAnnouncements: {},
   hidePnl: false,
+  boTradeFooterDismissed: false,
+  preIpoSLTPWarningAcknowledged: false,
   hidePositionSize: false,
   hideSmallBalances: false,
   obSetSize: false,
@@ -144,6 +156,7 @@ const userPreferencesSchema = z
   .object({
     preferences: z
       .object({
+        aggregateByOrder: z.boolean().catch(defaultPreferences.aggregateByOrder),
         showRawPrices: z.boolean().catch(defaultPreferences.showRawPrices),
         showMarkPriceCandles: z.boolean().catch(defaultPreferences.showMarkPriceCandles),
         showBuySellMarks: z.boolean().catch(defaultPreferences.showBuySellMarks),
@@ -152,6 +165,7 @@ const userPreferencesSchema = z
         showLiquidationLine: z.boolean().catch(defaultPreferences.showLiquidationLine),
         showMarkPriceChartLine: z.boolean().catch(defaultPreferences.showMarkPriceChartLine),
         isAmountInBase: z.boolean().catch(defaultPreferences.isAmountInBase),
+        isOrderBookAmountInBase: z.boolean().catch(defaultPreferences.isOrderBookAmountInBase),
         postOnly: z.boolean().catch(defaultPreferences.postOnly),
         orderDirection: z.enum(OrderDirections),
         currentRfqIds: z
@@ -229,7 +243,15 @@ const userPreferencesSchema = z
           .number()
           .catch(defaultPreferences.maxSLTPSlippage)
           .transform((maxSlippage) => Math.min(maxSlippage, MAX_SLTP_ORDER_SLIPPAGE)),
+        boPriceTolerance: z
+          .number()
+          .catch(defaultPreferences.boPriceTolerance)
+          .transform((priceTolerance) =>
+            Math.min(BO_MAX_PRICE_TOLERANCE_CENTS, Math.max(0, Math.trunc(priceTolerance))),
+          ),
         conditionalLimitPrefill: z.boolean().catch(defaultPreferences.conditionalLimitPrefill),
+        isRfqTabSelected: z.boolean().catch(defaultPreferences.isRfqTabSelected),
+        showRfqSuggestions: z.boolean().catch(defaultPreferences.showRfqSuggestions),
         orderType: z.enum(OrderType).catch(defaultPreferences.orderType),
         closePositionOrderType: z.enum(OrderType).catch(defaultPreferences.closePositionOrderType),
         depositCapNotificationDismissed: z
@@ -271,9 +293,19 @@ const userPreferencesSchema = z
         publicPoolChartCustomRange: customDateRangeSchema.optional().catch(undefined),
         stakingPoolChartCustomRange: customDateRangeSchema.optional().catch(undefined),
         inviteToastDismissed: z.boolean().catch(defaultPreferences.inviteToastDismissed),
+        dismissedPaidActionFeeTerms: z
+          .boolean()
+          .catch(defaultPreferences.dismissedPaidActionFeeTerms),
+        paidActionPlusUpsellPromptedAt: z
+          .number()
+          .nullable()
+          .catch(defaultPreferences.paidActionPlusUpsellPromptedAt),
         slWorseThanLiqToastDismissedAt: z
           .number()
           .catch(defaultPreferences.slWorseThanLiqToastDismissedAt),
+        walletUpgradePromptedAt: z
+          .record(z.string(), z.number())
+          .catch(defaultPreferences.walletUpgradePromptedAt),
         showWithdrawalSurvey: z.boolean().catch(defaultPreferences.showWithdrawalSurvey),
         seenFeatureHighlight: z.string().catch(defaultPreferences.seenFeatureHighlight),
         lastAnnouncementDismissed: z.number().catch(defaultPreferences.lastAnnouncementDismissed),
@@ -281,6 +313,10 @@ const userPreferencesSchema = z
           .record(z.string(), z.boolean())
           .catch(defaultPreferences.dismissedMarketAnnouncements),
         hidePnl: z.boolean().catch(defaultPreferences.hidePnl),
+        boTradeFooterDismissed: z.boolean().catch(defaultPreferences.boTradeFooterDismissed),
+        preIpoSLTPWarningAcknowledged: z
+          .boolean()
+          .catch(defaultPreferences.preIpoSLTPWarningAcknowledged),
         hidePositionSize: z.boolean().catch(defaultPreferences.hidePositionSize),
         hideSmallBalances: z.boolean().catch(defaultPreferences.hideSmallBalances),
         obSetSize: z.boolean().catch(defaultPreferences.obSetSize),
@@ -344,15 +380,23 @@ export const createPreferencesSlice: StateCreator<PreferencesSlice, [], [], Pref
   persistenceSet: () => {},
   persistenceGet: () => null,
   setPreference: (key, value) => {
-    const newPreferences = { ...get().preferences, [key]: value }
-    // setPreference should also save the data
-    persistence.setItem('preferences', JSON.stringify(newPreferences))
-    set({ preferences: newPreferences })
+    try {
+      const newPreferences = { ...get().preferences, [key]: value }
+      // setPreference should also save the data
+      persistence.setItem('preferences', JSON.stringify(newPreferences))
+      set({ preferences: newPreferences })
+    } catch (error) {
+      errorReporting.captureException(error)
+    }
   },
   loadPreferences: () => {
-    const currentStorage = persistence.getItem('preferences') ?? '{}'
-    const preferences = JSON.parse(currentStorage) as unknown as Partial<UserPreferences>
+    try {
+      const currentStorage = persistence.getItem('preferences') ?? '{}'
+      const preferences = JSON.parse(currentStorage) as unknown as Partial<UserPreferences>
 
-    set({ preferences: userPreferencesSchema.parse({ preferences }).preferences })
+      set({ preferences: userPreferencesSchema.parse({ preferences }).preferences })
+    } catch (error) {
+      errorReporting.captureException(error)
+    }
   },
 })

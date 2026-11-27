@@ -1,3 +1,5 @@
+import { getCalendarCandleBucketTimeMs } from './getCalendarCandleBucketTimeMs'
+import { fetchCandlePage } from './candleRecovery/fetchCandlePage'
 import type { Candle, MarkPriceCandle } from 'zklighter-perps'
 import type {
   CandlesResolutionEnum,
@@ -54,22 +56,8 @@ export const markPriceCandleToCandlestick = (
   resolution: resolution,
 })
 
-const isEmptyTradeCandle = (candle: Candle): boolean => !candle.v && !candle.V
-
 const isTradablePrice = (price: number | undefined): price is number =>
   price !== undefined && Number.isFinite(price) && price > 0
-
-const withMarkPriceRange = (
-  bar: ExtendedCandlestick,
-  markCandle: MarkPriceCandle | undefined,
-): ExtendedCandlestick => {
-  if (!markCandle || !isTradablePrice(markCandle.h) || !isTradablePrice(markCandle.l)) {
-    return bar
-  }
-  const high = Math.max(bar.high, markCandle.h)
-  const low = Math.min(bar.low, markCandle.l)
-  return high === bar.high && low === bar.low ? bar : { ...bar, high, low }
-}
 
 export const withContinuousOpen = (
   bar: ExtendedCandlestick,
@@ -104,6 +92,8 @@ const withContinuousOpens = (bars: ExtendedCandlestick[]): ExtendedCandlestick[]
     }
   })
 
+const isEmptyTradeCandle = (candle: Candle): boolean => !candle.v && !candle.V
+
 export const mergeTradeAndMarkPriceCandles = (
   tradeCandles: Candle[],
   markPriceCandles: MarkPriceCandle[],
@@ -121,12 +111,7 @@ export const mergeTradeAndMarkPriceCandles = (
     const tradeCandle = tradeByTime.get(time)
     const markCandle = markByTime.get(time)
     if (tradeCandle && !isEmptyTradeCandle(tradeCandle)) {
-      bars.push(
-        withMarkPriceRange(
-          candleToCandlestick(tradeCandle, marketId, resolution, false),
-          markCandle,
-        ),
-      )
+      bars.push(candleToCandlestick(tradeCandle, marketId, resolution, false))
       return
     }
     if (markCandle) {
@@ -141,7 +126,7 @@ export const mergeTradeAndMarkPriceCandles = (
   return bars
 }
 
-const markPriceCandlesWithTradeVolume = (
+export const markPriceCandlesWithTradeVolume = (
   markPriceCandles: MarkPriceCandle[],
   tradeCandles: Candle[],
   marketId: number,
@@ -194,7 +179,7 @@ export const tvResToResInMiliseconds = (resolution: string): number => {
   }
 }
 
-const obResToResInMiliseconds = (resolution: string): number => {
+export const obResToResInMiliseconds = (resolution: string): number => {
   switch (resolution) {
     case '1m':
       return MS_IN_MINUTE
@@ -331,12 +316,16 @@ const getHistoricalCandlesPaginated = async <T extends { t: number }>(
     from,
     to,
     countBack,
+    strict,
+    signal,
   }: {
     from: number
     to: number
     countBack: number
+    strict?: boolean
+    signal?: AbortSignal
   },
-  fetchPage: (page: CandlePage) => Promise<T[]>,
+  fetchPage: (page: CandlePage, signal?: AbortSignal) => Promise<T[]>,
 ): Promise<T[]> => {
   if (from <= BE_TIMESTAMP_MIN || to <= LIGHTER_INITIAL_TIMESTAMP) {
     return []
@@ -353,11 +342,16 @@ const getHistoricalCandlesPaginated = async <T extends { t: number }>(
         break
       }
 
-      const candles = await fetchPage({
+      // A future end shifts the edge's 500-bucket window past now, and the
+      // backend pads the short window with a stored row from across a gap.
+      const page = {
         start_timestamp: from,
-        end_timestamp: currentTo,
+        end_timestamp: Math.min(currentTo, Date.now()),
         count_back: limit,
-      })
+      }
+      const candles = strict
+        ? await fetchCandlePage(signal, (pageSignal) => fetchPage(page, pageSignal))
+        : await fetchPage(page, signal)
 
       if (!candles.length) {
         break
@@ -365,12 +359,15 @@ const getHistoricalCandlesPaginated = async <T extends { t: number }>(
 
       allCandles.unshift(...candles)
       remainingCountBack -= candles.length
-      currentTo = candles[0]!.t
+      // Both REST endpoints include end_timestamp. Move strictly before the
+      // oldest returned candle so overlapping pages do not consume countBack.
+      currentTo = candles[0]!.t - 1
 
       if (candles.length < limit) {
         break
       }
-    } catch {
+    } catch (error) {
+      if (strict) throw error
       break
     }
   }
@@ -384,23 +381,34 @@ const getHistoricalCandles = ({
   from,
   to,
   countBack,
+  strict,
+  signal,
+  mergeMarkPrice = false,
 }: {
   marketId: number
   resolution: string
   from: number
   to: number
   countBack: number
+  strict?: boolean
+  signal?: AbortSignal
+  mergeMarkPrice?: boolean
 }) =>
   getHistoricalCandlesPaginated<Candle>(
-    { from, to, countBack },
-    async ({ start_timestamp, end_timestamp, count_back }) => {
-      const { c } = await apis.candlesticksApi.candles({
-        market_id: marketId,
-        resolution: resolution as CandlesResolutionEnum,
-        start_timestamp,
-        end_timestamp,
-        count_back,
-      })
+    { from, to, countBack, strict, signal },
+    async ({ start_timestamp, end_timestamp, count_back }, pageSignal) => {
+      const { c, code, message } = await apis.candlesticksApi.candles(
+        {
+          market_id: marketId,
+          resolution: resolution as CandlesResolutionEnum,
+          start_timestamp,
+          end_timestamp,
+          count_back,
+          ...(mergeMarkPrice ? { merge_mark_price: true } : {}),
+        },
+        { signal: pageSignal },
+      )
+      if (strict && code !== 200) throw new Error(message || 'Candle history failed')
       return c
     },
   )
@@ -411,39 +419,70 @@ const getHistoricalMarkPriceCandles = ({
   from,
   to,
   countBack,
+  strict,
+  signal,
 }: {
   marketId: number
   resolution: string
   from: number
   to: number
   countBack: number
+  strict?: boolean
+  signal?: AbortSignal
 }) =>
   getHistoricalCandlesPaginated<MarkPriceCandle>(
-    { from, to, countBack },
-    async ({ start_timestamp, end_timestamp, count_back }) => {
-      const { c } = await apis.candlesticksApi.markPriceCandles({
-        market_id: marketId,
-        resolution: resolution as MarkPriceCandlesResolutionEnum,
-        start_timestamp,
-        end_timestamp,
-        count_back,
-      })
+    { from, to, countBack, strict, signal },
+    async ({ start_timestamp, end_timestamp, count_back }, pageSignal) => {
+      const { c, code, message } = await apis.candlesticksApi.markPriceCandles(
+        {
+          market_id: marketId,
+          resolution: resolution as MarkPriceCandlesResolutionEnum,
+          start_timestamp,
+          end_timestamp,
+          count_back,
+          connect_opens: true,
+        },
+        { signal: pageSignal },
+      )
+      if (strict && code !== 200) throw new Error(message || 'Candle history failed')
       return c
     },
   )
 
-export const fetchHistoricalCandlesticks = async ({
+// Own both paginators even when a strict caller has no retry manager. A failed
+// source must cancel its sibling before another history attempt can start.
+const fetchCandleSources = async <T>(
+  signal: AbortSignal | undefined,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (signal?.aborted) abort()
+  else signal?.addEventListener('abort', abort, { once: true })
+  try {
+    return await run(controller.signal)
+  } finally {
+    controller.abort()
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+const fetchHistoricalSourceCandlesticks = async ({
   period,
   marketId,
   resolution,
   showRawPrices,
   showMarkPriceCandles = false,
+  strict = false,
+  signal,
 }: {
   period: { to: number; from: number; countBack: number }
   marketId: number
   resolution: string
   showRawPrices: boolean
   showMarkPriceCandles?: boolean
+  strict?: boolean
+  signal?: AbortSignal
 }) => {
   const from = period.from * 1000
   const to = period.to * 1000
@@ -461,22 +500,28 @@ export const fetchHistoricalCandlesticks = async ({
       : period.countBack
 
   if (showMarkPriceCandles) {
-    const [markPriceCandles, tradeCandles] = await Promise.all([
-      getHistoricalMarkPriceCandles({
-        marketId,
-        resolution,
-        from,
-        to,
-        countBack,
-      }),
-      getHistoricalCandles({
-        marketId,
-        resolution,
-        from,
-        to,
-        countBack,
-      }),
-    ])
+    const [markPriceCandles, tradeCandles] = await fetchCandleSources(signal, (signal) =>
+      Promise.all([
+        getHistoricalMarkPriceCandles({
+          marketId,
+          resolution,
+          from,
+          to,
+          countBack,
+          strict,
+          signal,
+        }),
+        getHistoricalCandles({
+          marketId,
+          resolution,
+          from,
+          to,
+          countBack,
+          strict,
+          signal,
+        }),
+      ]),
+    )
 
     return withContinuousOpens(
       markPriceCandlesWithTradeVolume(markPriceCandles, tradeCandles, marketId, resolution).filter(
@@ -492,6 +537,8 @@ export const fetchHistoricalCandlesticks = async ({
       from,
       to,
       countBack,
+      strict,
+      signal,
     })
 
     return tradeCandles
@@ -499,26 +546,125 @@ export const fetchHistoricalCandlesticks = async ({
       .map((candle) => candleToCandlestick(candle, marketId, resolution, true))
   }
 
-  const [tradeCandles, markPriceCandles] = await Promise.all([
-    getHistoricalCandles({
-      marketId,
-      resolution,
-      from,
-      to,
-      countBack,
-    }),
-    getHistoricalMarkPriceCandles({
-      marketId,
-      resolution,
-      from,
-      to,
-      countBack,
-    }),
-  ])
+  const mergedCandles = await getHistoricalCandles({
+    marketId,
+    resolution,
+    from,
+    to,
+    countBack,
+    strict,
+    signal,
+    mergeMarkPrice: true,
+  })
 
   return withContinuousOpens(
-    mergeTradeAndMarkPriceCandles(tradeCandles, markPriceCandles, marketId, resolution).filter(
-      (bar) => bar.time < now,
-    ),
+    mergedCandles
+      .filter((candle) => candle.t < now)
+      .map((candle) => candleToCandlestick(candle, marketId, resolution, false)),
   )
+}
+
+/** A listing may start late, but a returned boundary must be aligned and contiguous. */
+export const assertCompleteCandleBoundary = (
+  bars: ReadonlyArray<{ time: number }>,
+  start: number,
+  end: number,
+  sourceMs: number,
+): void => {
+  if (
+    !bars.length ||
+    bars.at(-1)!.time !== end ||
+    bars.some(
+      (bar, index) =>
+        !Number.isFinite(bar.time) ||
+        bar.time < start ||
+        bar.time > end ||
+        (bar.time - start) % sourceMs !== 0 ||
+        (index > 0 && bar.time !== bars[index - 1]!.time + sourceMs),
+    )
+  )
+    throw new Error('Incomplete candle history boundary')
+}
+
+/** Validate all source candles in the leading display bucket, including aligned Raw pages. */
+export const assertCompleteLeadingCandleBucket = (
+  bars: ReadonlyArray<{ time: number }>,
+  resolution: string,
+  sourceMs: number,
+  toMs = bars.at(-1)?.time ?? 0,
+): void => {
+  const first = bars[0]
+  if (!first) return
+  const interval = tvResToResInMiliseconds(resolution)
+  const start =
+    resolution === '1M' || resolution === '1W' || resolution === '3D'
+      ? getCalendarCandleBucketTimeMs(first.time, resolution)
+      : Math.floor(first.time / interval) * interval
+  const date = new Date(start)
+  const next =
+    resolution === '1M'
+      ? Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)
+      : resolution === '3D'
+        ? Math.min(start + interval, Date.UTC(date.getUTCFullYear() + 1, 0, 1))
+        : start + interval
+  // A live bucket and an explicitly truncated historical window may end early.
+  const end = Math.min(
+    next - sourceMs,
+    Math.floor(Math.min(toMs, Date.now()) / sourceMs) * sourceMs,
+  )
+  assertCompleteCandleBoundary(
+    bars.filter((bar) => bar.time < next),
+    start,
+    end,
+    sourceMs,
+  )
+}
+
+/** Complete the actual returned oldest bucket, since optimized REST pages can
+ * start earlier than the requested window. Fetch its predecessor too so Default
+ * and Mark opens agree with subsequent pages. Existing source callers opt in.
+ */
+export const fetchHistoricalCandlesticks = async (
+  params: Parameters<typeof fetchHistoricalSourceCandlesticks>[0] & { completeBoundary?: boolean },
+): Promise<ExtendedCandlestick[]> => {
+  const source = await fetchHistoricalSourceCandlesticks(params)
+  const duration = tvResToResInMiliseconds(params.resolution)
+  const requestedStart =
+    params.resolution === '1M' || params.resolution === '1W' || params.resolution === '3D'
+      ? getCalendarCandleBucketTimeMs(params.period.from * 1000, params.resolution)
+      : Math.floor((params.period.from * 1000) / duration) * duration
+  // REST can prepend the last traded candle hours before a complete requested
+  // window. It is not a source bucket owned by this page; do not try to repair
+  // its unrelated gap. Keep the aligned requested bucket and validate it normally.
+  const bars = params.completeBoundary
+    ? source.filter((bar) => !Number.isFinite(bar.time) || bar.time >= requestedStart)
+    : source
+  const first = bars[0]
+  if (!params.completeBoundary || !first || first.time <= LIGHTER_INITIAL_TIMESTAMP) return bars
+  const resolution = params.resolution
+  const interval = tvResToResInMiliseconds(resolution)
+  const start =
+    resolution === '1M' || resolution === '1W' || resolution === '3D'
+      ? getCalendarCandleBucketTimeMs(first.time, resolution)
+      : Math.floor(first.time / interval) * interval
+  const sourceMs = obResToResInMiliseconds(tvResToObRes(resolution))
+  const validate = (result: ExtendedCandlestick[]) => {
+    assertCompleteLeadingCandleBucket(result, resolution, sourceMs, params.period.to * 1000)
+    return result
+  }
+  if (first.time === start) return validate(bars)
+  // Request through the first returned source bar. All later source candles
+  // already belong to this page and must not be counted twice.
+  const boundary = await fetchHistoricalSourceCandlesticks({
+    ...params,
+    resolution: sourceMs === MS_IN_DAY ? '1D' : String(sourceMs / MS_IN_MINUTE),
+    period: {
+      from: (start - sourceMs) / 1000,
+      to: first.time / 1000,
+      countBack: Math.floor((first.time - start) / sourceMs) + 2,
+    },
+  })
+  const prefix = boundary.filter((bar) => bar.time >= start && bar.time <= first.time)
+  assertCompleteCandleBoundary(prefix, start, first.time, sourceMs)
+  return validate([...prefix, ...bars.slice(1)])
 }

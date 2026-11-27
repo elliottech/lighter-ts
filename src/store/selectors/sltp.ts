@@ -8,9 +8,14 @@ import {
 import { OrderType } from '../../types/order'
 import type { AccountsSlice } from '../accounts/createAccountsSlice'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
-import { selectCurrentMarket, selectCurrentMarketMarkPrice } from '../orderbook/selectors'
+import { selectPerpsOrderBookMetas } from '../orderbook/metadataSelectors'
 import {
-  selectDisplayedForm,
+  selectCurrentMarket,
+  selectCurrentMarketId,
+  selectCurrentMarketMarkPrice,
+} from '../orderbook/selectors'
+import {
+  selectMarketId,
   selectOrderType,
   type OptionalDirection,
   type OptionalLimitPrice,
@@ -21,8 +26,8 @@ import {
 import type { PlaceOrderSlice } from '../place-order/createPlaceOrderSlice'
 import { selectIsLimit, selectStopLoss, selectTakeProfit } from '../place-order/selectors'
 import type { PreferencesSlice } from '../preferences/createPreferencesSlice'
-import { selectConditionalLimitPrefill } from '../preferences/selectors'
 import type { TokensSlice } from '../tokens/createTokensSlice'
+import { selectPreIpoCoins } from '../tokens/selectors'
 import type { UserSlice } from '../user/createUserSlice'
 import { createSelector } from '../utils/createSelector'
 import { createTracking } from '../utils/tracking'
@@ -33,6 +38,7 @@ import {
   selectEstPrice,
   selectLimitPrice,
   selectPositionAwareIsShort,
+  selectTriggerPrice,
 } from './common'
 import { selectUpdatedLiqPrice } from './updatedStats'
 
@@ -189,46 +195,60 @@ export const selectInvalidTakeProfitPriceText: (
   ),
 )
 
-export const selectIsSLTPSlippageRelevant: (
+export const selectIsMarketPreIpo = createSelector(
+  [selectPerpsOrderBookMetas, selectPreIpoCoins, selectMarketId],
+  createTracking('selectIsMarketPreIpo', (perpsMarkets, preIpoCoins, marketId) => {
+    const backendSymbol = perpsMarkets[marketId]?.backend_symbol
+    return backendSymbol ? preIpoCoins.has(backendSymbol) : false
+  }),
+)
+
+const selectIsCurrentMarketPreIpo = (state: OrderBookSlice & TokensSlice) =>
+  selectIsMarketPreIpo(state, { marketId: selectCurrentMarketId(state) })
+
+const selectPreIpoSLTPWarningAcknowledged = (state: PreferencesSlice) =>
+  state.preferences.preIpoSLTPWarningAcknowledged
+
+export const selectShowPreIpoSLTPWarning: (
   state: AccountsSlice &
     OrderBookSlice &
     PlaceOrderSlice &
     PreferencesSlice &
     TokensSlice &
     UserSlice,
+  params?: OptionalDirection,
 ) => boolean = createSelector(
   [
-    selectDisplayedForm,
+    selectPreIpoSLTPWarningAcknowledged,
+    selectIsCurrentMarketPreIpo,
     selectOrderType,
     selectStopLossInfo,
     selectTakeProfitInfo,
+    selectTriggerPrice,
     selectLimitPrice,
-    selectConditionalLimitPrefill,
   ],
   createTracking(
-    'selectIsSLTPSlippageRelevant',
+    'selectShowPreIpoSLTPWarning',
     (
-      displayedForm,
+      acknowledged,
+      isPreIpoMarket,
       orderType,
       stopLossInfo,
       takeProfitInfo,
+      triggerPrice,
       limitPrice,
-      conditionalLimitPrefill,
     ) => {
-      if (displayedForm.type !== 'placeOrder') {
-        return true
-      }
+      if (acknowledged || !isPreIpoMarket) return false
 
       switch (orderType) {
         case OrderType.Market:
         case OrderType.Limit:
           return [stopLossInfo, takeProfitInfo].some(
-            (info) => !!info.triggerPrice && (conditionalLimitPrefill || !info.limitPrice),
+            (info) => !!info.triggerPrice && !info.limitPrice,
           )
         case OrderType.Conditional:
-          return conditionalLimitPrefill || !limitPrice
-        case OrderType.Twap:
-        case OrderType.Scale:
+          return !!triggerPrice && !limitPrice
+        default:
           return false
       }
     },

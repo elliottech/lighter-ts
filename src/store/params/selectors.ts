@@ -1,8 +1,12 @@
 import { OrderDirections } from '../../constants/shared'
-import type { OrderPlacementInput, OrderType } from '../../types/order'
+import { type OrderPlacementInput, OrderType } from '../../types/order'
+import { isMarketSpot } from '../../utils/common'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
+import { selectOrderBookMetas } from '../orderbook/metadataSelectors'
 import type { PlaceOrderSlice } from '../place-order/createPlaceOrderSlice'
+import type { TimeInForce } from '../place-order/utils'
 import type { PreferencesSlice } from '../preferences/createPreferencesSlice'
+import type { TokensSlice } from '../tokens/createTokensSlice'
 import type { RouteType } from '../types'
 import type { UserSlice } from '../user/createUserSlice'
 
@@ -43,15 +47,38 @@ export function selectDirection<T extends PreferencesSlice, ParamsT extends Opti
 
 export type OptionalOrderType = { orderType?: OrderType }
 export function selectOrderType<
-  T extends PreferencesSlice & PlaceOrderSlice,
+  T extends PreferencesSlice & PlaceOrderSlice & OrderBookSlice & TokensSlice,
   ParamsT extends OptionalOrderType & OptionalDisplayedForm,
 >(state: T, params?: ParamsT): OrderType {
-  return (
-    params?.orderType ??
-    (selectDisplayedForm(state, params).type === 'closePosition'
-      ? state.preferences.closePositionOrderType
-      : state.preferences.orderType)
-  )
+  if (params?.orderType !== undefined) return params.orderType
+  if (selectDisplayedForm(state, params).type === 'closePosition') {
+    return state.preferences.closePositionOrderType
+  }
+
+  const preferredType = state.preferences.orderType
+  if (preferredType !== OrderType.Conditional) return preferredType
+
+  const market = selectOrderBookMetas(state)[state.currentMarketId]
+  const isSpot = !!market && isMarketSpot(market)
+  return isSpot ? OrderType.Market : preferredType
+}
+
+export type OptionalIsAdvancedTWAP = {
+  isAdvancedTWAP?: boolean
+}
+export function selectIsAdvancedTWAP<T, ParamsT extends OptionalIsAdvancedTWAP>(
+  _state: T,
+  params?: ParamsT,
+): boolean {
+  return params?.isAdvancedTWAP ?? false
+}
+
+export type OptionalTimeInForce = { timeInForce?: TimeInForce }
+export function selectTimeInForce<T extends PlaceOrderSlice, ParamsT extends OptionalTimeInForce>(
+  state: T,
+  params?: ParamsT,
+): TimeInForce {
+  return params?.timeInForce ?? state.timeInForce
 }
 
 type OptionalReduceOnly = { reduceOnly?: boolean }
@@ -97,7 +124,7 @@ export function selectLimitPriceInputValue<
 export type OptionalAssetId = { assetId?: number }
 export const selectAssetId = <
   T extends OrderBookSlice & PreferencesSlice,
-  ParamsT extends OptionalAssetId,
+  ParamsT extends OptionalAssetId & OptionalDirection,
 >(
   state: T,
   params?: ParamsT,
@@ -111,7 +138,7 @@ export const selectAssetId = <
 
   if (!currentMarket) return -1
 
-  return state.preferences.orderDirection === OrderDirections.Long
+  return selectDirection(state, params) === OrderDirections.Long
     ? currentMarket.quote_asset_id
     : currentMarket.base_asset_id
 }

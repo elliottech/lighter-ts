@@ -102,7 +102,36 @@ an interval:
 `throttleInterval` (default 500ms) is the client-side flush cadence.
 `flushInterval` (default 250ms) is a *different* knob — it is sent to the server
 on subscribe as `flush_interval`, asking it to batch upstream. Both are set by
-the host through `initCommonPackage`.
+the host through `initCommonPackage`. A `null` `throttleInterval` disables the
+client-side buffering: every message is committed synchronously as it arrives,
+and no interval is created.
+
+Account channels (`account_all_orders`, `account_all_trades`,
+`account_all_positions_fe`, `account_all_assets`,
+`account_spot_avg_entry_prices`) take a second path. Their reducers
+depend on the previous state (orders merge, trade volume accumulates), so the
+*message* cannot be buffered like a stats map — the **reducer** is queued
+instead and the whole window is applied in one `setState`, in ws arrival order:
+
+```
+  account msgs ──▶ handleWsMessage ──▶ bufferedAccountUpdates (queued reducers)
+                                                │
+                                    setTimeout(accountThrottleInterval)
+                                                │
+                                                ▼
+                                    one useLighterStore.setState({ accounts })
+```
+
+`accountThrottleInterval` (default 50ms, set by the host through
+`initCommonPackage` like the other two) is deliberately shorter than
+`throttleInterval`; `null` applies each queued reducer synchronously instead of
+scheduling the timeout. A placed or cancelled order must
+still feel instant, while a reconnect snapshot burst or a fill storm collapses
+into one commit. The server does not batch the user's own account channels at
+all (only public-pool subscriptions get its 500ms batching, and positions honor
+`flush_interval`), so this is the only throttle those streams get. The queue is
+dropped on socket close (`clearBufferedAccountUpdates`) since the reconnect
+snapshots re-seed state, and `logout` drops the leaving account's tail.
 
 Two details worth knowing:
 
@@ -112,8 +141,12 @@ Two details worth knowing:
 - **Market stats merge in place** (`mergeInPlace`) instead of rebuilding the map
   per message, because they arrive constantly and the map is large.
 
-Low-frequency messages — account updates, order fills, notifications — are
-written straight through. Only the firehose is buffered.
+One-shot messages — `subscribed/*` snapshots for market data, `rfq`, agent
+replies, notifications, executed transactions — are written (or dispatched)
+straight through: each subscribe, quote event or question produces a single
+message, so there is no stream to throttle. `rfq` in particular must stay
+immediate because the create-quote HTTP response writes the same `rfqs` slice;
+a deferred snapshot could land after it and delete the new quote.
 
 ### `handleWsMessage`
 
@@ -131,6 +164,9 @@ configuration decide. Incoming records pass through `selectAllowedMarketIds` /
 `selectAllowedAssetIds` before reaching the store, so a market that isn't enabled
 never lands in state.
 
+Market stats are the exception: they're stored for every market, because updates
+only carry the changed fields. Read them by the id of an allowed market.
+
 ### Also exported
 
 - `selectWsSessionId` — reads `wsSessionId` off the subscription store.
@@ -138,7 +174,8 @@ never lands in state.
   transactions as they arrive. Remember to unsubscribe.
 - Agent thread helpers — `appendAgentExchange`, `patchInFlightAgentExchanges`,
   `clearAgentThread`, `failInFlightAgentExchanges`, `newAgentExchangeId`.
-- `clearBufferedCandlesticksForKey`, `handleChangeDesiredMarket`.
+- `clearBufferedAccountUpdates`, `clearBufferedCandlesticksForKey`,
+  `handleChangeDesiredMarket`.
 
 ---
 

@@ -1,0 +1,215 @@
+{
+  "user_tiers": [
+    {
+      "name": "standard",
+      "level": 1,
+      "maker_fee_ticks": 0,
+      "taker_fee_ticks": 0,
+      "required_lit_stakes": 0,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 300,
+      "send_tx_rate_limit": 40,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium",
+      "level": 2,
+      "maker_fee_ticks": 40,
+      "taker_fee_ticks": 280,
+      "required_lit_stakes": 0,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 200,
+      "send_tx_rate_limit": 4000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_1",
+      "level": 2,
+      "maker_fee_ticks": 39,
+      "taker_fee_ticks": 273,
+      "required_lit_stakes": 1000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 195,
+      "send_tx_rate_limit": 5000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_2",
+      "level": 2,
+      "maker_fee_ticks": 38,
+      "taker_fee_ticks": 266,
+      "required_lit_stakes": 3000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 190,
+      "send_tx_rate_limit": 6000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_3",
+      "level": 2,
+      "maker_fee_ticks": 36,
+      "taker_fee_ticks": 252,
+      "required_lit_stakes": 10000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 180,
+      "send_tx_rate_limit": 7000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_4",
+      "level": 2,
+      "maker_fee_ticks": 34,
+      "taker_fee_ticks": 238,
+      "required_lit_stakes": 30000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 170,
+      "send_tx_rate_limit": 8000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_5",
+      "level": 2,
+      "maker_fee_ticks": 32,
+      "taker_fee_ticks": 224,
+      "required_lit_stakes": 100000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 160,
+      "send_tx_rate_limit": 12000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_6",
+      "level": 2,
+      "maker_fee_ticks": 30,
+      "taker_fee_ticks": 210,
+      "required_lit_stakes": 300000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 150,
+      "send_tx_rate_limit": 24000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "premium_7",
+      "level": 2,
+      "maker_fee_ticks": 28,
+      "taker_fee_ticks": 196,
+      "required_lit_stakes": 500000,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 140,
+      "send_tx_rate_limit": 40000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "plus",
+      "level": 4,
+      "maker_fee_ticks": 50,
+      "taker_fee_ticks": 50,
+      "required_lit_stakes": 0,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 300,
+      "send_tx_rate_limit": 8000,
+      "max_sub_accounts": 8
+    },
+    {
+      "name": "kubwallet",
+      "level": 5,
+      "maker_fee_ticks": 600,
+      "taker_fee_ticks": 600,
+      "required_lit_stakes": 0,
+      "required_volume": 0,
+      "twap_fee_ticks": 0,
+      "taker_latency_ms": 300,
+      "send_tx_rate_limit": 4000,
+      "max_sub_accounts": 8
+    }
+  ],
+  "bo_tiers": [
+    {
+      "name": "bo_0",
+      "required_volume": 0,
+      "fee_rate": 1
+    },
+    {
+      "name": "bo_1",
+      "required_volume": 5000,
+      "fee_rate": 0.95
+    },
+    {
+      "name": "bo_2",
+      "required_volume": 25000,
+      "fee_rate": 0.9
+    },
+    {
+      "name": "bo_3",
+      "required_volume": 100000,
+      "fee_rate": 0.85
+    },
+    {
+      "name": "bo_4",
+      "required_volume": 250000,
+      "fee_rate": 0.8
+    },
+    {
+      "name": "bo_5",
+      "required_volume": 500000,
+      "fee_rate": 0.75
+    },
+    {
+      "name": "bo_6",
+      "required_volume": 1000000,
+      "fee_rate": 0.7
+    },
+    {
+      "name": "bo_7",
+      "required_volume": 2000000,
+      "fee_rate": 0.6
+    }
+  ],
+  "staking_tiers": [
+    {
+      "name": "level1",
+      "required_lit_stakes": 1000,
+      "fee_rate": 0.975
+    },
+    {
+      "name": "level2",
+      "required_lit_stakes": 3000,
+      "fee_rate": 0.95
+    },
+    {
+      "name": "level3",
+      "required_lit_stakes": 10000,
+      "fee_rate": 0.9
+    },
+    {
+      "name": "level4",
+      "required_lit_stakes": 30000,
+      "fee_rate": 0.85
+    },
+    {
+      "name": "level5",
+      "required_lit_stakes": 100000,
+      "fee_rate": 0.8
+    },
+    {
+      "name": "level6",
+      "required_lit_stakes": 300000,
+      "fee_rate": 0.75
+    },
+    {
+      "name": "level7",
+      "required_lit_stakes": 500000,
+      "fee_rate": 0.7
+    }
+  ]
+}

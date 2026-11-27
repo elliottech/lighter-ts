@@ -1,3 +1,4 @@
+import { getBOStatsMidPrice } from '../../utils/bo'
 import { groupBy, mapValues, pickBy } from 'lodash-es'
 
 import { computeSpotMarketTvl } from '../../formulas/computeSpotMarketTvl'
@@ -13,37 +14,40 @@ import type {
   SpotOrderBookDetail,
 } from '../../types/compatibility'
 import { getCandleKey } from '../../utils/candlesticks'
+import { resolveFeeTiers, toFeeTierConfigs } from '../../utils/fees'
 import { convertBaseToFloat, convertFloatToBase, isMarketSpot } from '../../utils/common'
 import { displayPriceToReal, realPriceToDisplay, realSizeToDisplay } from '../../utils/multiplier'
-import {
-  buildSyntheticPerpsEntry,
-  buildSyntheticSpotEntry,
-} from '../../utils/synthetic-market-details'
+import { type UpDownResolution, getUpDownCandleKey } from '../../ws-sub-store/upDownPrice'
 import { selectAssetId, selectMarketId } from '../params/selectors'
 import { selectMarketTradesFilterBy, selectOrderBookGroupBy } from '../preferences/selectors'
 import {
   selectAllowedAssetSymbols,
-  selectAllowedTokenSymbols,
   selectDefaultOrderBookGroupBySymbol,
   selectRwaCoins,
-  selectTokens,
   selectTokenSymbols,
   selectUrlEnabledAssetIds,
-  selectUrlEnabledMarketIds,
 } from '../tokens/selectors'
-import type { Order } from '../types'
+import type { Order, Trade } from '../types'
 import { createDeepEqualSelector } from '../utils/createDeepEqualSelector'
 import { createSelector } from '../utils/createSelector'
 import { createTracking } from '../utils/tracking'
 
 import type { OrderBookSlice } from './createOrderBookSlice'
+import {
+  selectOrderBookMetas,
+  selectSpotOrderBookMetas,
+  selectPerpsOrderBookMetas,
+  selectUpcomingSymbols,
+} from './metadataSelectors'
 
 export const LLP_ASSET_ID = 42
 export const LIT_ASSET_ID = 2
 export const USDC_ASSET_ID = 3
-const LIT_MARKET_ID = 120
+export const LIT_MARKET_ID = 120
 
 const DEFAULT_ORDER_BOOK: WsOrderbook = { asks: [], bids: [] }
+
+const EMPTY_TRADES: Trade[] = []
 
 const MAX_OI_LIMIT = 72057594037927936 // 2^56
 
@@ -52,6 +56,19 @@ export const selectSystemConfig = (state: OrderBookSlice) => state.systemConfig
 // 0 means fee collection is off: no integrator approval, no attributes on orders
 export const selectFeeCollectorAccountIndex = (state: OrderBookSlice) =>
   state.systemConfig.fee_collector_account_index ?? 0
+
+const selectFeeTiersState = (state: OrderBookSlice) => state.feeTiers
+const selectFallbackFeeTiers = (state: OrderBookSlice) => state.fallbackFeeTiers
+
+export const selectFeeTiers = createSelector(
+  [selectFeeTiersState, selectFallbackFeeTiers],
+  createTracking('selectFeeTiers', resolveFeeTiers),
+)
+
+export const selectFeeTierConfigs = createSelector(
+  [selectFeeTiers, selectFallbackFeeTiers],
+  createTracking('selectFeeTierConfigs', toFeeTierConfigs),
+)
 
 export const selectL1Info = (state: OrderBookSlice) => state.l1Info
 
@@ -68,138 +85,14 @@ const selectOrderBookLiquidationTrades = (state: OrderBookSlice) => state.liquid
 
 export const selectOrderBook = (state: OrderBookSlice) => state.orderBook ?? DEFAULT_ORDER_BOOK
 
-export const selectOrderBookLoading = (state: OrderBookSlice) => !state.orderBook
+// True when the book cannot price an order: none yet, or kept from a closed
+// socket. Every submit gate reads this one.
+export const selectOrderBookLoading = (state: OrderBookSlice) =>
+  !state.orderBook || state.orderBookStale
 
-const selectRawSpotOrderBookMetas = (state: OrderBookSlice) => state.spotOrderBookMetas
-
-const selectRawPerpsOrderBookMetas = (state: OrderBookSlice) => state.perpsOrderBookMetas
-
-export const selectUpcomingSymbols = createSelector(
-  [selectTokens],
-  createTracking(
-    'selectUpcomingSymbols',
-    (tokens) =>
-      new Set(
-        (tokens ?? [])
-          .filter((t) => t.is_allowed_mainnet && t.categories.includes('UPCOMING'))
-          .map((t) => t.backend_symbol),
-      ),
-  ),
-)
-
-const selectSyntheticPerpsOrderBookMetas = createSelector(
-  [selectTokens],
-  createTracking('selectSyntheticPerpsOrderBookMetas', (tokens) => {
-    if (!tokens) return {}
-    return tokens.reduce<Record<string, PerpsOrderBookDetail>>((acc, t, i) => {
-      if (t.market === 'PERPS' && t.is_allowed_mainnet && t.categories.includes('UPCOMING')) {
-        const id = -(i + 2)
-        acc[id] = buildSyntheticPerpsEntry(t.symbol, id, t.backend_symbol)
-      }
-      return acc
-    }, {})
-  }),
-)
-
-const selectSyntheticSpotOrderBookMetas = createSelector(
-  [selectTokens],
-  createTracking('selectSyntheticSpotOrderBookMetas', (tokens) => {
-    if (!tokens) return {}
-    return tokens.reduce<Record<string, SpotOrderBookDetail>>((acc, t, i) => {
-      if (t.market === 'SPOT' && t.is_allowed_mainnet && t.categories.includes('UPCOMING')) {
-        const id = -(i + 2)
-        acc[id] = buildSyntheticSpotEntry(t.symbol, id, t.backend_symbol)
-      }
-      return acc
-    }, {})
-  }),
-)
-
-export const selectSyntheticOrderBookMetas = createSelector(
-  [selectSyntheticSpotOrderBookMetas, selectSyntheticPerpsOrderBookMetas],
-  createTracking('selectSyntheticOrderBookMetas', (spot, perps) => ({ ...spot, ...perps })),
-)
-
-const isAllowedMeta = (
-  meta: OrderBookDetail,
-  id: string,
-  tokenSymbols: Set<string>,
-  allowedTokenSymbols: Set<string>,
-  urlEnabledMarketIds: Set<number>,
-  upcomingSymbols: Set<string>,
-) => {
-  if (upcomingSymbols.has(meta.backend_symbol)) return false
-  if (!tokenSymbols.has(meta.backend_symbol)) return true
-  return allowedTokenSymbols.has(meta.backend_symbol) || urlEnabledMarketIds.has(Number(id))
-}
-
-const selectSpotOrderBookMetas = createSelector(
-  [
-    selectRawSpotOrderBookMetas,
-    selectSyntheticSpotOrderBookMetas,
-    selectTokenSymbols,
-    selectAllowedTokenSymbols,
-    selectUrlEnabledMarketIds,
-    selectUpcomingSymbols,
-  ],
-  createTracking(
-    'selectSpotOrderBookMetas',
-    (
-      metas,
-      synthetics,
-      tokenSymbols,
-      allowedTokenSymbols,
-      urlEnabledMarketIds,
-      upcomingSymbols,
-    ) => ({
-      ...pickBy(metas, (meta, id) =>
-        isAllowedMeta(
-          meta,
-          id,
-          tokenSymbols,
-          allowedTokenSymbols,
-          urlEnabledMarketIds,
-          upcomingSymbols,
-        ),
-      ),
-      ...synthetics,
-    }),
-  ),
-)
-
-export const selectPerpsOrderBookMetas = createSelector(
-  [
-    selectRawPerpsOrderBookMetas,
-    selectSyntheticPerpsOrderBookMetas,
-    selectTokenSymbols,
-    selectAllowedTokenSymbols,
-    selectUrlEnabledMarketIds,
-    selectUpcomingSymbols,
-  ],
-  createTracking(
-    'selectPerpsOrderBookMetas',
-    (
-      metas,
-      synthetics,
-      tokenSymbols,
-      allowedTokenSymbols,
-      urlEnabledMarketIds,
-      upcomingSymbols,
-    ) => ({
-      ...pickBy(metas, (meta, id) =>
-        isAllowedMeta(
-          meta,
-          id,
-          tokenSymbols,
-          allowedTokenSymbols,
-          urlEnabledMarketIds,
-          upcomingSymbols,
-        ),
-      ),
-      ...synthetics,
-    }),
-  ),
-)
+// True only before the first snapshot of a market. Order book panels read this
+// so a reconnect keeps the last prices on screen instead of a skeleton.
+export const selectOrderBookDisplayLoading = (state: OrderBookSlice) => !state.orderBook
 
 export const selectOrderBookMetasLoaded = (state: OrderBookSlice) => state.orderBookMetasLoaded
 export const selectAssetMetasLoaded = (state: OrderBookSlice) => state.assetMetasLoaded
@@ -210,11 +103,38 @@ export const selectPerpsMarketsStatsLoading = (state: OrderBookSlice) =>
 
 export const selectSpotMarketsStats = (state: OrderBookSlice) => state.spotMarketsStats
 
-const selectAssetsStats = (state: OrderBookSlice) => state.assetsStats
+export const selectBOMarketsStats = (state: OrderBookSlice) => state.boMarketsStats
+
+export const selectUpDownCandles = (
+  state: OrderBookSlice,
+  symbol: string,
+  duration: number,
+  resolution: UpDownResolution,
+) => state.upDownCandles[getUpDownCandleKey(symbol, duration, resolution)] ?? null
+
+export const selectAssetsStats = (state: OrderBookSlice) => state.assetsStats
 
 const selectL1AssetBalances = (state: OrderBookSlice) => state.l1AssetBalances
 
 export const selectCurrentMarketId = (state: OrderBookSlice) => state.currentMarketId
+
+export const selectBOCurrentMarket = (state: OrderBookSlice) => state.currentBOMarket
+
+export const selectBOCurrentMarketId = (state: OrderBookSlice) =>
+  state.currentBOMarket?.market_id ?? -1
+
+export const selectBOCurrentMarketStats = createSelector(
+  [selectBOMarketsStats, selectBOCurrentMarketId],
+  createTracking(
+    'selectBOCurrentMarketStats',
+    (boMarketsStats, boCurrentMarketId) => boMarketsStats[boCurrentMarketId],
+  ),
+)
+
+export const selectBOCurrentMidPrice = createSelector(
+  [selectBOCurrentMarketStats],
+  createTracking('selectBOCurrentMidPrice', (boMarketStats) => getBOStatsMidPrice(boMarketStats)),
+)
 
 const selectRawAssetMetas = (state: OrderBookSlice) => state.assetMetas
 
@@ -241,14 +161,6 @@ export const selectAssetMeta = createSelector(
 export const selectUsdcSymbol = createSelector(
   [selectAssetMetas],
   createTracking('selectUsdcSymbol', (assetMetas) => assetMetas[USDC_ASSET_ID]?.symbol ?? 'USDC'),
-)
-
-export const selectOrderBookMetas = createSelector(
-  [selectSpotOrderBookMetas, selectPerpsOrderBookMetas],
-  createTracking('selectOrderBookMetas', (spotOrderBookMetas, perpsOrderBookMetas) => ({
-    ...spotOrderBookMetas,
-    ...perpsOrderBookMetas,
-  })),
 )
 
 export const selectNonSyntheticOrderBookMetas = createSelector(
@@ -355,7 +267,7 @@ export const selectCurrentPerpsMarket = createSelector(
 )
 
 export const isHiddenMarket = (market: SpotOrderBookDetail | PerpsOrderBookDetail) => {
-  if (isMarketSpot(market)) {
+  if (isMarketSpot(market) || !market.market_config) {
     return false
   }
 
@@ -718,7 +630,68 @@ export const selectSpotMarketStats = createSelector(
   createTracking('selectSpotMarketStats', (spotMarketStats, marketId) => spotMarketStats[marketId]),
 )
 
-const selectCommonMarketStats = createSelector(
+// A plain lookup, not a memoized selector: a flush keeps unchanged markets' stats objects, so each subscriber only sees
+// its own market change, while a memoized one recomputes on every market's flush and thrashes between market ids.
+export const selectBOMarketStats = (state: OrderBookSlice, { marketId }: { marketId: number }) =>
+  state.boMarketsStats[marketId]
+
+export const selectBOMidPrice = createSelector(
+  [selectBOMarketStats],
+  createTracking('selectBOMidPrice', (boMarketStats) => getBOStatsMidPrice(boMarketStats)),
+)
+
+export const selectBOOpenInterest = createSelector(
+  [selectBOMarketStats],
+  createTracking('selectBOOpenInterest', (boMarketStats) => boMarketStats?.open_interest ?? null),
+)
+
+export const selectParamCount = <ParamsT extends { count: number }>(
+  _state: unknown,
+  params: ParamsT,
+) => params.count
+
+interface BODisplayOrderbookItem extends WsOrderbookItem {
+  totalBase: number
+  totalPercentageBase: number
+}
+
+export const selectBODisplayOrderBook = createSelector(
+  [selectOrderBook, selectParamCount],
+  createTracking('selectBODisplayOrderBook', (orderBook, count) => {
+    const takeLevels = (levels: WsOrderbookItem[]) => {
+      let totalBase = 0
+      return levels
+        .filter((level) => level.size > 0)
+        .slice(0, count)
+        .map((level) => {
+          totalBase += level.size
+          return { ...level, totalBase, totalPercentageBase: 0 }
+        })
+    }
+
+    const asks = takeLevels(orderBook.asks)
+    const bids = takeLevels(orderBook.bids)
+    const maxTotalBase = Math.max(
+      asks[asks.length - 1]?.totalBase ?? 0,
+      bids[bids.length - 1]?.totalBase ?? 0,
+    )
+
+    const withPercentage = (levels: BODisplayOrderbookItem[]): BODisplayOrderbookItem[] =>
+      levels.map((level) => ({
+        ...level,
+        totalPercentageBase: maxTotalBase === 0 ? 0 : (level.totalBase / maxTotalBase) * 100,
+      }))
+
+    return { asks: withPercentage(asks), bids: withPercentage(bids) }
+  }),
+)
+
+export const selectBOMarketTrades = createSelector(
+  [selectOrderBookTrades],
+  createTracking('selectBOMarketTrades', (trades) => trades ?? EMPTY_TRADES),
+)
+
+export const selectCommonMarketStats = createSelector(
   [selectPerpsMarketStats, selectSpotMarketStats],
   createTracking(
     'selectCommonMarketStats',
@@ -772,6 +745,11 @@ export const selectCurrentMarketOpenInterest = createSelector(
   ),
 )
 
+export const selectIsCurrentPerpsMarketStatsLoaded = createSelector(
+  [selectCurrentPerpsMarketStats],
+  createTracking('selectIsCurrentPerpsMarketStatsLoaded', (marketStats) => !!marketStats),
+)
+
 export const selectCurrentMarketOpenInterestLimit = createSelector(
   [selectCurrentPerpsMarketStats],
   createTracking('selectOpenInterestLimit', (marketStats) => {
@@ -786,14 +764,16 @@ export const selectCurrentMarketOpenInterestLimit = createSelector(
 export const selectIsCurrentMarketReduceOnly = createSelector(
   [selectCurrentMarket],
   createTracking('selectIsCurrentMarketReduceOnly', (market) =>
-    !market || isMarketSpot(market) ? false : market.market_config.force_reduce_only,
+    !market || isMarketSpot(market) || !market.market_config
+      ? false
+      : market.market_config.force_reduce_only,
   ),
 )
 
 export const selectIsCurrentMarketLiquidationMode = createSelector(
   [selectCurrentMarket],
   createTracking('selectIsCurrentMarketLiquidationMode', (market) =>
-    isMarketSpot(market) ? false : !!market.market_config.liquidation_mode,
+    isMarketSpot(market) || !market.market_config ? false : !!market.market_config.liquidation_mode,
   ),
 )
 

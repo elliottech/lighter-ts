@@ -1,4 +1,4 @@
-import { getTokenUrl } from '../../images/getTokenUrl'
+import { getSmallTokenUrl, getTokenUrl } from '../../images/getTokenUrl'
 import type { Token } from '../../types/tokenlist'
 import { createSelector } from '../utils/createSelector'
 import { createTracking } from '../utils/tracking'
@@ -27,6 +27,14 @@ export const selectTokensBySymbol = createSelector(
   createTracking('selectTokensBySymbol', (tokens) => {
     if (!tokens) return {}
     return buildTokenRecord(tokens, (t) => t)
+  }),
+)
+
+export const selectPreIpoCoins = createSelector(
+  [selectTokens],
+  createTracking('selectPreIpoCoins', (tokens) => {
+    if (!tokens) return new Set<string>()
+    return new Set(tokens.filter((t) => t.categories.includes('PRE_IPO')).map(getTokenKey))
   }),
 )
 
@@ -119,11 +127,29 @@ export const selectTokenImageUrls = createSelector(
   }),
 )
 
+export const selectTokenSmallSizeImageUrls = createSelector(
+  [selectTokens],
+  createTracking('selectTokenSmallSizeImageUrls', (tokens) => {
+    if (!tokens) return {}
+    return buildTokenRecord(tokens, (t) => getSmallTokenUrl(t.logo, t.logo_extension))
+  }),
+)
+
 export const selectTokenIconMap = createSelector(
   [selectTokens],
   createTracking('selectTokenIconMap', (tokens) => {
     if (!tokens) return {}
     return Object.fromEntries(tokens.map((t) => [t.logo, getTokenUrl(t.logo, t.logo_extension)]))
+  }),
+)
+
+export const selectTokenSmallSizeIconMap = createSelector(
+  [selectTokens],
+  createTracking('selectTokenSmallSizeIconMap', (tokens) => {
+    if (!tokens) return {}
+    return Object.fromEntries(
+      tokens.map((t) => [t.logo, getSmallTokenUrl(t.logo, t.logo_extension)]),
+    )
   }),
 )
 

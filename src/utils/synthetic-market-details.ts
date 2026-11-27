@@ -23,6 +23,7 @@ export function buildSyntheticPerpsEntry(
     market_type: 'perp',
     base_asset_id: -1,
     quote_asset_id: -1,
+    fee_collector_account_index: -1,
     status: 'inactive',
     taker_fee: '0',
     maker_fee: '0',
@@ -55,6 +56,11 @@ export function buildSyntheticPerpsEntry(
     base_interest_rate: '0',
     created_at: '',
     market_flags: 0,
+    operator_account_index: 0,
+    is_frozen: false,
+    open_interest_limit: '0',
+    open_interest_usd: '0',
+    market_deployer: '',
   }
 }
 
@@ -70,6 +76,7 @@ export function buildSyntheticSpotEntry(
     market_type: 'spot',
     base_asset_id: -1,
     quote_asset_id: -1,
+    fee_collector_account_index: -1,
     status: 'inactive',
     taker_fee: '0',
     maker_fee: '0',
@@ -88,5 +95,10 @@ export function buildSyntheticSpotEntry(
     is_maker_fee_enabled: false,
     multiplier: '1',
     created_at: '',
+    operator_account_index: 0,
+    is_frozen: false,
+    open_interest_limit: '0',
+    open_interest_usd: '0',
+    market_deployer: '',
   }
 }

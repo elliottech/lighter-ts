@@ -1,13 +1,14 @@
-import { keyBy } from 'lodash-es'
 import { useMemo } from 'react'
-import type { AccountApi, PublicPoolsMetadataRequest } from 'zklighter-perps'
-import { SubAccountType, type PublicPoolMetadata, type Share } from '../store/types'
+import {
+  AccountAccountTypeEnum,
+  type AccountApi,
+  type PublicPoolsMetadataRequest,
+} from 'zklighter-perps'
+import { type PublicPoolMetadata, type Share } from '../store/types'
 import { useAccountPublicPoolListQuery } from '../hooks/useAccountPublicPoolListQuery'
 import { LIT_ASSET_ID, selectAssetIndexPrices } from '../store/orderbook/selectors'
 import { useUserAccount } from '../hooks/useUserAccount'
 import { useLighterStore } from '../store/useLighterStore'
-import { useAccounts } from '../hooks/useAccountsQuery'
-import { computeSpotEquity } from '../formulas/common'
 import { MAX_ACCOUNT_INDEX_LIMIT } from '../constants/shared'
 import { convertPublicPoolMetadata } from './restApiConversion'
 
@@ -19,6 +20,18 @@ export const getYourDeposits = (shares: Share[], publicPoolIndex: number) => {
   }
 
   return share.principal_amount
+}
+
+export const getRemainingLlpDepositLimit = (
+  maxLlpAmount: string | undefined,
+  shares: Share[],
+  publicPoolIndex: number,
+) => {
+  if (maxLlpAmount === undefined) {
+    return null
+  }
+
+  return Math.max(0, Number(maxLlpAmount) - (getYourDeposits(shares, publicPoolIndex) ?? 0))
 }
 
 const getYourReturns = (
@@ -64,6 +77,38 @@ export const getYourPoolStats = (
   return { yourDeposits, yourReturns, yourEquity }
 }
 
+export const getYourPublicPoolStats = (
+  shares: Share[],
+  publicPoolIndex: number,
+  tvl: number | null,
+  totalShares: number,
+  operatorShares?: number,
+) => {
+  const yourDeposits = getYourDeposits(shares, publicPoolIndex)
+  const poolStats = getYourPoolStats(
+    [
+      ...shares,
+      ...(operatorShares
+        ? [
+            {
+              public_pool_index: publicPoolIndex,
+              shares_amount: operatorShares,
+              principal_amount: 0,
+              entry_timestamp: 0,
+            },
+          ]
+        : []),
+    ],
+    publicPoolIndex,
+    tvl ?? 0,
+    totalShares,
+  )
+  const yourEquity = tvl === null ? null : poolStats.yourEquity
+  const yourReturns = tvl === null ? null : poolStats.yourReturns
+
+  return { yourDeposits, yourReturns, yourEquity }
+}
+
 export const useStakedAmount = () => {
   const stakingPoolsQuery = useAccountPublicPoolListQuery()
 
@@ -71,7 +116,7 @@ export const useStakedAmount = () => {
     const stakingPools =
       stakingPoolsQuery.data?.pages
         .flatMap((page) => page.public_pools)
-        .filter((pool) => pool.account_type === SubAccountType.Staking) ?? []
+        .filter((pool) => pool.account_type === AccountAccountTypeEnum.LighterStakingPool) ?? []
 
     return stakingPools.reduce(
       (totalEquity, stakingPool) =>
@@ -116,111 +161,6 @@ export const usePendingUnstakedEquity = () => {
   return useMemo(() => {
     return pendingUnstakes * litIndexPrice
   }, [pendingUnstakes, litIndexPrice])
-}
-
-const EMPTY_INDEX_PRICES: Record<string, number> = {}
-
-export const useAccountPublicPoolShares = () => {
-  const userAccount = useUserAccount()
-  const publicPoolsQuery = useAccountPublicPoolListQuery()
-  const { publicPoolAccounts: userPublicPools } = useAccounts()
-  // Index prices are only needed to value operator pools' spot holdings;
-  // don't re-render every non-operator's portfolio on each price tick
-  const hasOperatorPools = userPublicPools.length > 0
-  const assetIndexPrices = useLighterStore((state) =>
-    hasOperatorPools ? selectAssetIndexPrices(state) : EMPTY_INDEX_PRICES,
-  )
-
-  const { publicPoolDeposits, publicPoolReturns } = useMemo(() => {
-    const publicPools = publicPoolsQuery.data?.pages
-      .flatMap((page) => page.public_pools)
-      .filter((pool) => {
-        switch (pool.account_type) {
-          case SubAccountType.LighterPublic:
-          case SubAccountType.Public: {
-            return true
-          }
-          default: {
-            return false
-          }
-        }
-      })
-
-    // no data covers both pending and errored queries — equity is unknown, never zero
-    if (!publicPools) {
-      return { publicPoolDeposits: null, publicPoolReturns: null }
-    }
-
-    const deposits = publicPools.reduce(
-      (totalDeposits, publicPool) =>
-        totalDeposits +
-        (getYourDeposits(
-          publicPool.account_share ? [publicPool.account_share] : [],
-          publicPool.account_index,
-        ) ?? 0),
-      0,
-    )
-
-    const returns = publicPools.reduce(
-      (totalReturns, publicPool) =>
-        totalReturns +
-        (getYourReturns(
-          publicPool.account_share ? [publicPool.account_share] : [],
-          publicPool.account_index,
-          // pool value = perps value (total_asset_value) + spot holdings value
-          publicPool.total_asset_value + publicPool.total_spot_value,
-          publicPool.total_shares,
-        ) ?? 0),
-      0,
-    )
-
-    if (userAccount?.account_type === SubAccountType.Main) {
-      const userPublicPoolsReturns = userPublicPools.reduce(
-        (total, pool) =>
-          total +
-          (getYourReturns(
-            pool.pool_info?.operator_shares
-              ? [
-                  {
-                    public_pool_index: pool.account_index,
-                    shares_amount: pool.pool_info.operator_shares,
-                    principal_amount: 0,
-                    entry_timestamp: 0,
-                  },
-                ]
-              : [],
-            pool.account_index,
-            // DetailedAccount has no total_spot_value; value the pool's spot
-            // holdings from its asset balances at index prices
-            pool.total_asset_value +
-              (computeSpotEquity(assetIndexPrices, keyBy(pool.assets, 'asset_id')) ?? 0),
-            pool.pool_info?.total_shares ?? 0,
-          ) ?? 0),
-        0,
-      )
-
-      return {
-        publicPoolDeposits: deposits,
-        publicPoolReturns: returns + userPublicPoolsReturns,
-      }
-    }
-
-    return {
-      publicPoolDeposits: deposits,
-      publicPoolReturns: returns,
-    }
-  }, [publicPoolsQuery.data, userAccount, userPublicPools, assetIndexPrices])
-
-  return {
-    publicPoolDeposits,
-    publicPoolReturns,
-    publicPoolEquity:
-      publicPoolDeposits === null || publicPoolReturns === null
-        ? null
-        : publicPoolDeposits + publicPoolReturns,
-    isLoading: publicPoolsQuery.isPending,
-    isError: publicPoolsQuery.isError,
-  }
 }
 
 export const fetchAllPublicPools = async (

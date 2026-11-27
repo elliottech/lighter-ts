@@ -33,6 +33,7 @@ const useAssetMetasQuery = () =>
     },
     refetchInterval: INIT_DATA_REFETCH_INTERVAL,
     staleTime: INIT_DATA_REFETCH_INTERVAL,
+    refetchOnWindowFocus: true,
   })
 
 export const useInitAssetMetas = () => {

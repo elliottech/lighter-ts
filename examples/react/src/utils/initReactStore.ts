@@ -1,4 +1,11 @@
-import { API_KEY_INDEXES, initCommonPackage, Platform, useLighterStore } from 'lighter-ts'
+import {
+  API_KEY_INDEXES,
+  generateTimestampClientOrderIndex,
+  initCommonPackage,
+  Platform,
+  useLighterStore,
+} from 'lighter-ts'
+import fallbacks from 'lighter-ts/fallbacks/mainnet'
 import { signers, apis, persistence, sha256, errorReporting, errorToast } from '../lib'
 import { isRegistered } from './isRegistered'
 
@@ -7,25 +14,13 @@ export const initReactStore = () => {
     setItem: persistence.setItem,
     getItem: persistence.getItem,
     sha256: sha256,
-    accountApi: apis.accountApi,
-    announcementApi: apis.announcementApi,
-    bridgeApi: apis.bridgeApi,
-    candlesticksApi: apis.candlesticksApi,
-    fundingApi: apis.fundingApi,
-    infoApi: apis.infoApi,
-    notificationApi: apis.notificationApi,
-    orderApi: apis.orderApi,
-    referralApi: apis.referralApi,
-    rootApi: apis.rootApi,
-    stockFinancialsApi: apis.stockFinancialsApi,
-    tokenlistApi: apis.tokenlistApi,
-    transactionApi: apis.transactionApi,
-    atomicordersApi: apis.atomicordersApi,
-    marketNewsApi: apis.marketNewsApi,
+    apiClients: apis,
     env: 'mainnet',
+    fallbacks,
     websocketConfigParam: {
       flushInterval: 250,
       throttleInterval: 500,
+      accountThrottleInterval: 50,
     },
     captureException: errorReporting.captureException,
     showToastFromError: errorToast.showToastFromError,
@@ -36,7 +31,9 @@ export const initReactStore = () => {
     getPlatform: () => {
       return Platform.PlatformWeb
     },
+    generateClientOrderIndex: generateTimestampClientOrderIndex,
     isRegistered,
+    rpcToken: null,
     skipNonce: true,
   })
 

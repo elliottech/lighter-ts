@@ -1,0 +1,14 @@
+{
+  "code": 200,
+  "liquidity_pool_index": 281474976710651,
+  "staking_pool_index": 281474976710650,
+  "funding_fee_rebate_account_index": 80,
+  "market_maker_incentive_account_index": 45,
+  "fee_collector_account_index": 3,
+  "liquidity_pool_cooldown_period": 100,
+  "staking_pool_lockup_period": 200,
+  "max_integrator_spot_taker_fee": 10000,
+  "max_integrator_spot_maker_fee": 20,
+  "max_integrator_perps_taker_fee": 10,
+  "max_integrator_perps_maker_fee": 10
+}

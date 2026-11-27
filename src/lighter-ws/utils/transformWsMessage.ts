@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-argument, typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access, typescript/no-unsafe-return */
 import { marginPercentageToFraction } from '../../formulas/marginPercentageToFraction'
+import { toNullableNumber } from '../../utils/common'
 import { roundNumber } from '../../utils/precision'
 import type { WsMessage } from '../types/WsMessage'
 
@@ -21,6 +22,12 @@ const transformTrade = (trade: any) => {
   trade.maker_fee = trade.maker_fee ?? 0
   trade.integrator_taker_fee = trade.integrator_taker_fee ?? 0
   trade.integrator_maker_fee = trade.integrator_maker_fee ?? 0
+  trade.taker_position_size_before = toNullableNumber(trade.taker_position_size_before)
+  trade.taker_entry_quote_before = toNullableNumber(trade.taker_entry_quote_before)
+  trade.maker_position_size_before = toNullableNumber(trade.maker_position_size_before)
+  trade.maker_entry_quote_before = toNullableNumber(trade.maker_entry_quote_before)
+  trade.ask_account_pnl = toNullableNumber(trade.ask_account_pnl)
+  trade.bid_account_pnl = toNullableNumber(trade.bid_account_pnl)
 }
 
 const transformTrades = (trades: any) => {
@@ -121,7 +128,20 @@ const transformUpdatePositionsRecord = (positions: any) => {
   }
 }
 
-const transformAssetBalance = (assetBalance: any) => {
+const transformBOPosition = (boPosition: any) => {
+  boPosition.entry_quote = Number(boPosition.entry_quote)
+  boPosition.sign = Number(boPosition.sign)
+  boPosition.size = Number(boPosition.size)
+  boPosition.avg_entry_price = Number(boPosition.avg_entry_price)
+}
+
+const transformBOPositionsRecord = (boPositions: any) => {
+  for (const key in boPositions) {
+    transformBOPosition(boPositions[key])
+  }
+}
+
+export const transformAssetBalance = (assetBalance: any) => {
   assetBalance.balance = Number(assetBalance.balance)
   assetBalance.margin_balance = Number(assetBalance.margin_balance)
   assetBalance.locked_balance = Number(assetBalance.locked_balance)
@@ -162,43 +182,80 @@ const transformShares = (shares: any) => {
   for (const share of shares) transformShare(share)
 }
 
-const transformPerpsMarketStats = (stats: any) => {
-  stats.daily_quote_token_volume = roundNumber(stats.daily_quote_token_volume, 2)
-  stats.daily_price_change = roundNumber(stats.daily_price_change / 100, 4)
-  stats.last_trade_price = Number(stats.last_trade_price)
-  stats.current_funding_rate = Number(stats.current_funding_rate)
-  stats.index_price = Number(stats.index_price)
-  stats.mark_price = Number(stats.mark_price)
-  stats.mid_price = Number(stats.mid_price)
-  stats.best_bid_price = Number(stats.best_bid_price)
-  stats.best_ask_price = Number(stats.best_ask_price)
-  stats.open_interest = Number(stats.open_interest)
-  stats.open_interest_limit = Number(stats.open_interest_limit)
-  stats.funding_clamp_big = Number(stats.funding_clamp_big)
-  stats.funding_clamp_small = Number(stats.funding_clamp_small)
+const SPOT_MARKET_STATS_NUMBER_FIELDS = [
+  'last_trade_price',
+  'index_price',
+  'mid_price',
+  'best_bid_price',
+  'best_ask_price',
+]
+
+const PERPS_MARKET_STATS_NUMBER_FIELDS = [
+  ...SPOT_MARKET_STATS_NUMBER_FIELDS,
+  'current_funding_rate',
+  'mark_price',
+  'open_interest',
+  'open_interest_limit',
+  'funding_clamp_big',
+  'funding_clamp_small',
+]
+
+const BO_MARKET_STATS_NUMBER_FIELDS = [
+  ...SPOT_MARKET_STATS_NUMBER_FIELDS,
+  'daily_price_high',
+  'daily_price_low',
+  'open_interest',
+]
+
+const transformMarketStats = (stats: any, numberFields: string[]) => {
+  if (stats.daily_quote_token_volume !== undefined) {
+    stats.daily_quote_token_volume = roundNumber(stats.daily_quote_token_volume, 2)
+  }
+  if (stats.daily_price_change !== undefined) {
+    stats.daily_price_change = roundNumber(stats.daily_price_change / 100, 4)
+  }
+  for (const field of numberFields) {
+    if (stats[field] !== undefined) {
+      stats[field] = Number(stats[field])
+    }
+  }
 }
 
 const transformPerpsMarketStatsMessage = (data: any) => {
   if (data.timestamp) data.timestamp = Number(data.timestamp)
   for (const key in data.market_stats) {
-    transformPerpsMarketStats(data.market_stats[key])
+    transformMarketStats(data.market_stats[key], PERPS_MARKET_STATS_NUMBER_FIELDS)
   }
-}
-
-const transformSpotMarketStats = (stats: any) => {
-  stats.daily_quote_token_volume = roundNumber(stats.daily_quote_token_volume, 2)
-  stats.daily_price_change = roundNumber(stats.daily_price_change / 100, 4)
-  stats.last_trade_price = Number(stats.last_trade_price)
-  stats.index_price = Number(stats.index_price)
-  stats.mid_price = Number(stats.mid_price)
-  stats.best_bid_price = Number(stats.best_bid_price)
-  stats.best_ask_price = Number(stats.best_ask_price)
 }
 
 const transformSpotMarketStatsMessage = (data: any) => {
   if (data.timestamp) data.timestamp = Number(data.timestamp)
   for (const key in data.spot_market_stats) {
-    transformSpotMarketStats(data.spot_market_stats[key])
+    transformMarketStats(data.spot_market_stats[key], SPOT_MARKET_STATS_NUMBER_FIELDS)
+  }
+}
+
+const transformBOMarketStats = (stats: any) => {
+  transformMarketStats(stats, BO_MARKET_STATS_NUMBER_FIELDS)
+  for (const field of ['lifetime_quote_token_volume', 'lifetime_base_token_volume']) {
+    if (stats[field] !== undefined) {
+      stats[field] = roundNumber(Number(stats[field]), 2)
+    }
+  }
+}
+
+const transformBOMarketStatsMessage = (data: any) => {
+  for (const key in data.bo_market_stats) {
+    transformBOMarketStats(data.bo_market_stats[key])
+  }
+}
+
+const transformUpDownCandleMessage = (data: any) => {
+  for (const candle of data.candles) {
+    candle.open = Number(candle.open)
+    candle.high = Number(candle.high)
+    candle.low = Number(candle.low)
+    candle.close = Number(candle.close)
   }
 }
 
@@ -262,8 +319,6 @@ const transformMarkPriceCandleMessage = (data: any) => {
 }
 
 const transformSubscribedAccountTradesMessage = (data: any) => {
-  data.weekly_volume ??= 0
-  data.daily_volume ??= 0
   if (data.trades) {
     transformTradesRecord(data.trades)
   }
@@ -271,11 +326,17 @@ const transformSubscribedAccountTradesMessage = (data: any) => {
 
 const transformSubscribedPositionsMessage = (data: any) => {
   transformPositionsRecord(data.positions)
+  // TODO: remove once bo_positions is sent by every backend
+  data.bo_positions ??= {}
+  transformBOPositionsRecord(data.bo_positions)
   transformShares(data.shares)
 }
 
 const transformUpdatePositionsMessage = (data: any) => {
   transformUpdatePositionsRecord(data.positions)
+  // TODO: remove once bo_positions is sent by every backend
+  data.bo_positions ??= {}
+  transformBOPositionsRecord(data.bo_positions)
   if (data.last_funding_round) {
     transformLastFundingRound(data.last_funding_round)
   }
@@ -356,6 +417,14 @@ export const transformWsMessage = (data: any): WsMessage => {
     case 'subscribed/spot_market_stats':
     case 'update/spot_market_stats':
       transformSpotMarketStatsMessage(data)
+      break
+    case 'subscribed/bo_market_stats':
+    case 'update/bo_market_stats':
+      transformBOMarketStatsMessage(data)
+      break
+    case 'subscribed/up_down_candle':
+    case 'update/up_down_candle':
+      transformUpDownCandleMessage(data)
       break
     case 'subscribed/asset_stats':
     case 'update/asset_stats':

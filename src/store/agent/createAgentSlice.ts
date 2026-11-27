@@ -10,6 +10,7 @@ export interface AgentExchange {
   status: AgentExchangeStatus
   askedAt: number
   answeredAt: number | null
+  responseMs: number | null
 }
 
 export interface AgentThread {

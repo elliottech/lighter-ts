@@ -1,6 +1,6 @@
 import type { Position } from '../store/types'
 
-import { computeCollateralLockedInPosition, computePositionPnl } from './common'
+import { computeMarginReq, computePositionPnl } from './common'
 
 // returns how much collateral can be moved from isolated into cross
 export const computeMaxIsolatedMarginWithdraw = (
@@ -12,11 +12,10 @@ export const computeMaxIsolatedMarginWithdraw = (
 ) =>
   Math.max(
     0,
-    position.allocated_margin -
-      computeCollateralLockedInPosition(
-        position.position,
-        position.avg_entry_price,
-        position.initial_margin_fraction,
-      ) +
-      Math.min(0, computePositionPnl(position, markPrice)),
+    Math.min(
+      position.allocated_margin,
+      position.allocated_margin +
+        computePositionPnl(position, markPrice) -
+        computeMarginReq(position.position, markPrice, position.initial_margin_fraction),
+    ),
   )

@@ -1,6 +1,9 @@
+import { OrderTypeEnum } from 'zklighter-perps'
+
 import type { SLTP } from '../store/place-order/createPlaceOrderSlice'
 import type { OrderBookDetail } from '../types/compatibility'
 import { isPartialNumericInput } from '../utils/common'
+import { getTiedSLTPLimitPrice } from '../utils/getTiedSLTPLimitPrice'
 import { displayPriceToReal, realPriceToDisplay } from '../utils/multiplier'
 
 export type SLTPInfo = {
@@ -33,16 +36,26 @@ export const getSLTPInfo = ({
   referencePrice,
   market,
   isSL,
+  isEntirePosition = false,
 }: {
   orderSize: number
   sltp: SLTP
   leverage: number
   isShort: boolean
   referencePrice: number
-  market: Pick<OrderBookDetail, 'price_decimals' | 'multiplier' | 'display_price_decimals'>
+  market: OrderBookDetail
   isSL: boolean
+  isEntirePosition?: boolean
 }): SLTPInfo => {
   const limitPrice = displayPriceToReal(sltp.limitPriceInputValue, market, !isShort)
+  const effectiveLimitPrice = isEntirePosition
+    ? limitPrice
+    : getTiedSLTPLimitPrice(
+        limitPrice,
+        orderSize,
+        market,
+        isSL ? OrderTypeEnum.StopLossLimit : OrderTypeEnum.TakeProfitLimit,
+      )
   const sideSign = (isShort ? -1 : 1) * (isSL ? 1 : -1)
 
   switch (sltp.pinnedInput) {
@@ -58,12 +71,12 @@ export const getSLTPInfo = ({
           triggerPrice,
           amount: 0,
           percentage: 0,
-          limitPrice,
+          limitPrice: effectiveLimitPrice,
         }
       }
 
-      const closePrice = limitPrice
-        ? (isShort ? Math.min : Math.max)(triggerPrice, limitPrice)
+      const closePrice = effectiveLimitPrice
+        ? (isShort ? Math.min : Math.max)(triggerPrice, effectiveLimitPrice)
         : triggerPrice
       const priceDiff = sideSign * (referencePrice - closePrice)
       const priceDiffPercentage = (1 - closePrice / referencePrice) * 100
@@ -78,7 +91,7 @@ export const getSLTPInfo = ({
         triggerPrice,
         amount: newAmount,
         percentage: newPercentage,
-        limitPrice,
+        limitPrice: effectiveLimitPrice,
       }
     }
     case 'usd': {
@@ -93,7 +106,7 @@ export const getSLTPInfo = ({
           triggerPrice: 0,
           amount: newAmount,
           percentage: 0,
-          limitPrice,
+          limitPrice: effectiveLimitPrice,
         }
       }
 
@@ -110,7 +123,7 @@ export const getSLTPInfo = ({
         triggerPrice: newTriggerPrice,
         amount: newAmount,
         percentage,
-        limitPrice,
+        limitPrice: effectiveLimitPrice,
       }
     }
     case 'percent': {
@@ -125,7 +138,7 @@ export const getSLTPInfo = ({
           triggerPrice: 0,
           amount: 0,
           percentage: newPercentage,
-          limitPrice,
+          limitPrice: effectiveLimitPrice,
         }
       }
 
@@ -140,7 +153,7 @@ export const getSLTPInfo = ({
         triggerPrice: newTriggerPrice,
         amount: newAmount,
         percentage: newPercentage,
-        limitPrice,
+        limitPrice: effectiveLimitPrice,
       }
     }
   }

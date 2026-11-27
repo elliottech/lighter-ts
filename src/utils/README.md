@@ -59,11 +59,12 @@ is ≥ 6 places or the fast result isn't finite.
 | `fees.ts` | Static fee-tier tables for Lighter and Robinhood (standard / plus / premium 1–7) and the lookups over them. |
 | `filters.ts` | Portfolio timelines (`1D`, `1W`, …) — start timestamps, resolutions, custom ranges. |
 | `initCommonPackage.ts` | The package entry point. See [`../lib`](../lib). |
-| `marketFlags.ts` | Decoding `market_flags` into a `MarginMode`. Note the two different readings: `getDefaultMarketMarginModeFromFlags` (what a market defaults to) vs. the internal check behind `isMarketIsolatedOnly` (what it permits). |
+| `marketFlags.ts` | Decoding `market_flags` into an `AccountPositionMarginModeEnum`. Note the two different readings: `getDefaultMarketMarginModeFromFlags` (what a market defaults to) vs. the internal check behind `isMarketIsolatedOnly` (what it permits). |
 | `synthetic-market-details.ts` | Placeholder `OrderBookDetail` entries for markets that are announced but not yet listed, so the UI can show them without special-casing. |
 | `normalizeTokens.ts`, `withDisplaySymbol.ts` | Symbol normalization — see below. |
 | `getMarketDisplayPrice.ts`, `selectMarketDisplayPrice.ts` | Mid price, falling back to last trade price when there is no book. |
 | `isOrderActive.ts` | `Open` / `Pending` / `InProgress` are active; everything else is not. |
+| `getDefaultMarket.ts` | The market to open when there is no last-visited one: the caller's preferred symbols in order, then the first market. Hidden markets are skipped unless every market is hidden. |
 
 ## Backend vs. display symbols
 

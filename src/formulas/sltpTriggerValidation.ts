@@ -2,13 +2,17 @@ import { enforcePriceLimit } from '../utils/common'
 
 type SLTPTriggerReference = 'limit_price' | 'estimated_price' | 'mark_price'
 
-export type InvalidSLTPTriggerPriceKey =
+export type InvalidSLTriggerPriceKey =
   | 'stop_price_below_limit_price'
   | 'stop_price_above_limit_price'
   | 'stop_price_below_estimated_price'
   | 'stop_price_above_estimated_price'
   | 'sl_trigger_price_below_mark_price'
   | 'sl_trigger_price_above_mark_price'
+  | 'sl_trigger_price_below_liq_price'
+  | 'sl_trigger_price_above_liq_price'
+
+export type InvalidTPTriggerPriceKey =
   | 'tp_price_above_limit_price'
   | 'tp_price_below_limit_price'
   | 'tp_price_above_estimated_price'
@@ -16,17 +20,13 @@ export type InvalidSLTPTriggerPriceKey =
   | 'tp_trigger_price_above_mark_price'
   | 'tp_trigger_price_below_mark_price'
 
-export type SLTriggerPriceLiqWarningKey =
-  | 'sl_trigger_price_below_liq_price'
-  | 'sl_trigger_price_above_liq_price'
-
 export const getInvalidSLTPTriggerPriceKey = (
   isSL: boolean,
   isShort: boolean,
   triggerPrice: number,
   referencePrice: number,
   reference: SLTPTriggerReference,
-): InvalidSLTPTriggerPriceKey | null => {
+): InvalidSLTriggerPriceKey | InvalidTPTriggerPriceKey | null => {
   const isInvalid = isSL !== isShort ? triggerPrice > referencePrice : triggerPrice < referencePrice
 
   if (!isInvalid) {
@@ -54,15 +54,14 @@ export const getInvalidSLTPTriggerPriceKey = (
   }
 }
 
-export type InvalidSLTPPriceText = {
-  errorText?:
-    | 'sl_price_above_zero'
-    | 'tp_price_above_zero'
-    | 'sl_price_too_high'
-    | 'tp_price_too_high'
-    | InvalidSLTPTriggerPriceKey
-  warningText?: SLTriggerPriceLiqWarningKey
-} | null
+export type InvalidSLTPPriceText =
+  | 'sl_price_above_zero'
+  | 'tp_price_above_zero'
+  | 'sl_price_too_high'
+  | 'tp_price_too_high'
+  | InvalidSLTriggerPriceKey
+  | InvalidTPTriggerPriceKey
+  | null
 
 export const getInvalidSLTPPriceText = ({
   isSL,
@@ -90,11 +89,11 @@ export const getInvalidSLTPPriceText = ({
   }
 
   if (triggerPrice <= 0) {
-    return { errorText: isSL ? 'sl_price_above_zero' : 'tp_price_above_zero' }
+    return isSL ? 'sl_price_above_zero' : 'tp_price_above_zero'
   }
 
   if (!enforcePriceLimit(triggerPriceInputValue, displayPriceDecimals)) {
-    return { errorText: isSL ? 'sl_price_too_high' : 'tp_price_too_high' }
+    return isSL ? 'sl_price_too_high' : 'tp_price_too_high'
   }
 
   const referencePriceError = getInvalidSLTPTriggerPriceKey(
@@ -105,31 +104,31 @@ export const getInvalidSLTPPriceText = ({
     isLimit ? 'limit_price' : 'estimated_price',
   )
   if (referencePriceError) {
-    return { errorText: referencePriceError }
+    return referencePriceError
   }
 
   const markPriceError =
     !isLimit && getInvalidSLTPTriggerPriceKey(isSL, isShort, triggerPrice, markPrice, 'mark_price')
   if (markPriceError) {
-    return { errorText: markPriceError }
+    return markPriceError
   }
 
-  const liqWarning =
+  const liqError =
     isSL &&
     (!isShort || !isLimit) &&
-    getSLTriggerPriceLiqWarningKey(isShort, triggerPrice, liquidationPrice)
-  if (liqWarning) {
-    return { warningText: liqWarning }
+    getInvalidSLTriggerPriceLiqKey(isShort, triggerPrice, liquidationPrice)
+  if (liqError) {
+    return liqError
   }
 
   return null
 }
 
-export const getSLTriggerPriceLiqWarningKey = (
+export const getInvalidSLTriggerPriceLiqKey = (
   isShort: boolean,
   triggerPrice: number,
   liquidationPrice: number,
-): SLTriggerPriceLiqWarningKey | null => {
+): InvalidSLTriggerPriceKey | null => {
   if (isShort) {
     return triggerPrice > liquidationPrice ? 'sl_trigger_price_above_liq_price' : null
   }

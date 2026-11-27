@@ -2,7 +2,7 @@ import type { OrderbookItem } from '../store/types'
 import type { OrderBookDetail } from '../types/compatibility'
 import { OrderType, type OrderPlacementInput } from '../types/order'
 import { displaySizeToReal, realSizeToDisplay } from '../utils/multiplier'
-import { floorNumber } from '../utils/precision'
+import { floorNumber, floorPercentOf } from '../utils/precision'
 
 import { matchBaseAmount, matchQuoteAmount, type MatchInfo } from './orderBook'
 
@@ -65,7 +65,7 @@ export const computeSinglePriceMatchInfo = (
         }
       }
 
-      const baseAmount = floorNumber((sliderMax * percentage) / 100, market.size_decimals)
+      const baseAmount = floorPercentOf(sliderMax, percentage, market.size_decimals)
       const baseAmountInputValue = realSizeToDisplay(baseAmount, market).toString()
       const quoteAmountInputValue = floorNumber(
         baseAmount * price,
@@ -133,7 +133,7 @@ export const computeMarketOrderMatchInfo = (
     }
     case 'percentage': {
       const percentage = Number(pinnedValueInputValue)
-      const baseAmount = floorNumber((sliderMax * percentage) / 100, market.size_decimals)
+      const baseAmount = floorPercentOf(sliderMax, percentage, market.size_decimals)
       const baseAmountInputValue = baseAmount
         ? realSizeToDisplay(baseAmount, market).toString()
         : ''

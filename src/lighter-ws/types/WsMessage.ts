@@ -1,7 +1,6 @@
 import type {
   Candle,
   MarkPriceCandle,
-  RFQMetadata,
   RFQResponseEntry,
   OrderStatusEnum,
   OrderTimeInForceEnum,
@@ -9,10 +8,16 @@ import type {
   OrderTypeEnum,
   TradeTypeEnum,
   AccountAssetMarginModeEnum,
+  AccountPositionMarginModeEnum,
+  PublicPoolInfoStatusEnum,
+  RFQEntryDirectionEnum,
+  AccountBinaryOptionsPositionSignEnum,
+  BinaryOptionMarketStatsOutcomeEnum,
+  BinaryOptionMarketStatsStatusEnum,
+  OrderMarketKindEnum,
+  TradeMarketKindEnum,
 } from 'zklighter-perps'
 import type { RfqListStatusEnum } from 'zklighter-perps/apis/AccountApi'
-
-import type { MarginMode } from '../../types/MarginMode'
 
 export interface WsOrderbookItem {
   price: number
@@ -33,6 +38,8 @@ export interface WsTrade {
   is_maker_ask: boolean
   ask_account_id: number
   market_id: number
+  market_symbol: string
+  market_kind: TradeMarketKindEnum
   size: number
   price: number
   usd_amount: number
@@ -45,16 +52,16 @@ export interface WsTrade {
   maker_fee: number
   integrator_taker_fee: number
   integrator_maker_fee: number
-  taker_position_size_before?: string | null
-  taker_entry_quote_before?: string | null
+  taker_position_size_before: number | null
+  taker_entry_quote_before: number | null
   taker_position_sign_changed?: boolean | null
   taker_initial_margin_fraction_before?: number | null
-  maker_position_size_before?: string | null
-  maker_entry_quote_before?: string | null
+  maker_position_size_before: number | null
+  maker_entry_quote_before: number | null
   maker_position_sign_changed?: boolean | null
   maker_initial_margin_fraction_before?: number | null
-  ask_account_pnl?: string | null
-  bid_account_pnl?: string | null
+  ask_account_pnl: number | null
+  bid_account_pnl: number | null
 }
 
 export interface WsOrder {
@@ -64,6 +71,8 @@ export interface WsOrder {
   remaining_base_amount: number
   is_ask: boolean
   market_index: number
+  market_symbol: string
+  market_kind: OrderMarketKindEnum
   nonce: number
   owner_account_index: number
   price: number
@@ -73,6 +82,7 @@ export interface WsOrder {
   order_id: string
   client_order_index: number
   parent_order_id: string
+  to_cancel_order_id_0: string
   trigger_status: OrderTriggerStatusEnum
   status: OrderStatusEnum
   created_at: number
@@ -87,11 +97,19 @@ export interface WsPosition {
   sign: number
   position: number
   avg_entry_price: number
-  margin_mode: MarginMode
+  margin_mode: AccountPositionMarginModeEnum
   allocated_margin: number
   total_funding_paid_out: number
   total_discount: number
   margin_set_flag: number
+}
+
+export interface WsBOPosition {
+  market_id: number
+  entry_quote: number
+  sign: AccountBinaryOptionsPositionSignEnum
+  size: number
+  avg_entry_price: number
 }
 
 export interface WsAssetBalance {
@@ -118,7 +136,7 @@ export interface WsShare {
   entry_timestamp: number
 }
 
-export interface WsSpotMarketStats {
+interface WsBaseMarketStats {
   market_id: number
   daily_base_token_volume: number
   daily_price_change: number
@@ -126,10 +144,13 @@ export interface WsSpotMarketStats {
   daily_price_low: number
   daily_quote_token_volume: number
   last_trade_price: number
-  index_price: number
   mid_price: number
   best_bid_price: number
   best_ask_price: number
+}
+
+export interface WsSpotMarketStats extends WsBaseMarketStats {
+  index_price: number
 }
 
 export interface WsPerpsMarketStats extends WsSpotMarketStats {
@@ -142,6 +163,41 @@ export interface WsPerpsMarketStats extends WsSpotMarketStats {
   funding_clamp_small: number
 }
 
+export interface WsBOMarketStats extends WsBaseMarketStats {
+  symbol: string
+  lifetime_quote_token_volume: number
+  lifetime_base_token_volume: number
+  open_interest: number
+  status: BinaryOptionMarketStatsStatusEnum
+  outcome: BinaryOptionMarketStatsOutcomeEnum
+}
+
+export interface WsUpDownCandle {
+  symbol: string
+  duration: string
+  resolution: string
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
+  sample_count: number
+  provider: string
+  feed_id: string
+}
+
+export interface WsSubscribedUpDownCandleMessage {
+  type: 'subscribed/up_down_candle'
+  channel: string
+  candles: WsUpDownCandle[]
+}
+
+export interface WsUpdateUpDownCandleMessage {
+  type: 'update/up_down_candle'
+  channel: string
+  candles: WsUpDownCandle[]
+}
+
 export interface WsAssetStats {
   asset_id: number
   index_price: number
@@ -152,11 +208,10 @@ export interface WsRfq {
   id: number
   account_index: number
   market_index: number
-  direction: number
+  direction: RFQEntryDirectionEnum
   base_amount: number
   quote_amount: number
   status: RfqListStatusEnum
-  metadata: RFQMetadata
   responses: RFQResponseEntry[]
   created_at: number
   updated_at: number
@@ -173,7 +228,7 @@ export interface WsPoolInfo {
   min_operator_share_rate: number
   total_shares: number
   operator_shares: number
-  status: number
+  status: PublicPoolInfoStatusEnum
   annual_percentage_yield: number
 }
 
@@ -275,7 +330,7 @@ export interface WsUpdatePerpsMarketStatsMessage {
   type: 'update/market_stats'
   channel: string
   timestamp: number
-  market_stats: Record<string, WsPerpsMarketStats>
+  market_stats: Record<string, Partial<WsPerpsMarketStats>>
 }
 
 export interface WsSubscribedSpotMarketStatsMessage {
@@ -289,7 +344,19 @@ export interface WsUpdateSpotMarketStatsMessage {
   type: 'update/spot_market_stats'
   channel: string
   timestamp: number
-  spot_market_stats: Record<string, WsSpotMarketStats>
+  spot_market_stats: Record<string, Partial<WsSpotMarketStats>>
+}
+
+export interface WsSubscribedBOMarketStatsMessage {
+  type: 'subscribed/bo_market_stats'
+  channel: string
+  bo_market_stats: Record<string, WsBOMarketStats>
+}
+
+export interface WsUpdateBOMarketStatsMessage {
+  type: 'update/bo_market_stats'
+  channel: string
+  bo_market_stats: Record<string, Partial<WsBOMarketStats>>
 }
 
 export interface WsSubscribedAssetStatsMessage {
@@ -332,9 +399,6 @@ export interface WsSubscribedAccountTradesMessage {
   type: 'subscribed/account_all_trades'
   channel: string
   total_volume: number
-  monthly_volume: number
-  weekly_volume: number
-  daily_volume: number
 }
 
 export interface WsUpdateAccountTradesMessage {
@@ -347,6 +411,7 @@ export interface WsSubscribedAccountPositionsMessage {
   type: 'subscribed/account_all_positions_fe'
   channel: string
   positions: Record<string, WsPosition>
+  bo_positions: Record<string, WsBOPosition>
   shares: WsShare[]
 }
 
@@ -354,6 +419,7 @@ export interface WsUpdateAccountPositionsMessage {
   type: 'update/account_all_positions_fe'
   channel: string
   positions: Record<string, WsPosition>
+  bo_positions: Record<string, WsBOPosition>
   last_funding_round?: Record<string, number>
   last_funding_discount?: Record<string, number>
   shares: WsShare[]
@@ -386,6 +452,7 @@ export interface WsAgentAnsweredQA {
   question: string
   answer: string
   timestamp: number
+  response_ms?: number
 }
 
 export interface WsAgentPendingQA {
@@ -411,6 +478,7 @@ export interface WsUpdateAgentMessage {
   type: 'update/agent'
   channel: string
   answer: string
+  response_ms?: number
   id: string
 }
 
@@ -512,6 +580,10 @@ export type WsMessage =
   | WsUpdatePerpsMarketStatsMessage
   | WsSubscribedSpotMarketStatsMessage
   | WsUpdateSpotMarketStatsMessage
+  | WsSubscribedBOMarketStatsMessage
+  | WsUpdateBOMarketStatsMessage
+  | WsSubscribedUpDownCandleMessage
+  | WsUpdateUpDownCandleMessage
   | WsSubscribedAssetStatsMessage
   | WsUpdateAssetStatsMessage
   | WsSubscribedAssetBalancesMessage

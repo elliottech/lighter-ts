@@ -1,15 +1,17 @@
+import { AccountPositionMarginModeEnum, AccountPositionSignEnum } from 'zklighter-perps'
 import type { TimeInForce } from '../store/place-order/utils'
 import type { FeePercentages } from '../store/selectors/fees'
-import type { OrderbookItem, Position } from '../store/types'
+import type { AssetBalance, OrderbookItem, Position } from '../store/types'
 import type { OrderBookDetail } from '../types/compatibility'
-import { MarginMode } from '../types/MarginMode'
 import { OrderType } from '../types/order'
 import type { ExtendedUserTier } from '../types/user-tiers'
-import { getFeePercentageFromTier, isMarketSpot } from '../utils/common'
-import { floorNumber } from '../utils/precision'
+import { isMarketSpot } from '../utils/common'
+import { type FeeTierConfigs, getFeePercentageFromTier } from '../utils/fees'
+import { floorNumber, roundNumber } from '../utils/precision'
 
 import { computeMarginReq, marginFractionToLeverage } from './common'
 import { matchQuoteAmount } from './orderBook'
+import { type AutoSupplyCredit, NO_AUTO_SUPPLY_CREDIT } from './orderMargin'
 
 // what we expect the resulting position to be if the user were to place the order with the current state of the inputs
 const combinePositions = (position: Position, positionDelta: Position): Position => {
@@ -36,7 +38,7 @@ const combinePositions = (position: Position, positionDelta: Position): Position
   }
 
   let allocatedMargin = 0
-  if (position.margin_mode === MarginMode.ISOLATED) {
+  if (position.margin_mode === AccountPositionMarginModeEnum.Isolated) {
     if (position.sign === positionDelta.sign) {
       allocatedMargin = position.allocated_margin + positionDelta.allocated_margin
     } else {
@@ -52,7 +54,7 @@ const combinePositions = (position: Position, positionDelta: Position): Position
 
   return {
     ...position,
-    sign: Math.sign(combinedPositionSize),
+    sign: combinedPositionSize < 0 ? AccountPositionSignEnum.Short : AccountPositionSignEnum.Long,
     position: Math.abs(combinedPositionSize),
     avg_entry_price: avgEntryPrice,
     allocated_margin: allocatedMargin,
@@ -71,22 +73,21 @@ export const computePositionDelta = (
     return null
   }
 
-  const marginMode = currentMarketPosition?.margin_mode ?? MarginMode.CROSS
+  const marginMode = currentMarketPosition?.margin_mode ?? AccountPositionMarginModeEnum.Cross
 
   return {
     market_id: currentMarket.market_id,
     initial_margin_fraction: initialMarginFraction,
-    sign: isShort ? -1 : 1,
+    sign: isShort ? AccountPositionSignEnum.Short : AccountPositionSignEnum.Long,
     total_funding_paid_out: 0,
     total_discount: 0,
     margin_mode: marginMode,
     position: baseAmount,
     avg_entry_price: estPrice,
     allocated_margin:
-      marginMode === MarginMode.CROSS
+      marginMode === AccountPositionMarginModeEnum.Cross
         ? 0
         : computeMarginReq(baseAmount, estPrice, initialMarginFraction),
-    // TODO: check if this is correct or if we even care about this
     margin_set_flag: currentMarketPosition?.margin_set_flag ?? 0,
   }
 }
@@ -130,7 +131,7 @@ export const computeUpdatedCrossCollateral = (
 
   const takerFee = fees.takerFee * positionDelta.position * positionDelta.avg_entry_price
 
-  if (positionDelta.margin_mode === MarginMode.CROSS) {
+  if (positionDelta.margin_mode === AccountPositionMarginModeEnum.Cross) {
     return crossCollateral + realizedPnl - takerFee
   }
 
@@ -166,7 +167,7 @@ export const computeUpdatedCrossCollateral = (
 }
 
 const getMaxReduceOnlyValue = (position: Position | undefined, isShort: boolean) => {
-  if (!position || (position.sign === -1) === isShort) {
+  if (!position || (position.sign === AccountPositionSignEnum.Short) === isShort) {
     return 0
   }
 
@@ -219,55 +220,63 @@ export const getMaxMatchableBaseAmount = (
   availableToTrade: number,
   isShort: boolean,
   feeTicks: { takerFeeTick: number; makerFeeTick: number } | null,
+  feeTierConfigs: FeeTierConfigs,
+  limitPrice: number | null,
 ) => {
-  const { taker: takerFee } = getFeePercentageFromTier(userTier ?? 'standard', feeTicks)
+  const { taker: takerFee } = getFeePercentageFromTier(
+    userTier ?? 'standard',
+    feeTicks,
+    feeTierConfigs,
+  )
   const leverage = marginFractionToLeverage(initialMarginFraction)
-  let currentOrderIndex = 0
-  let currentClonedOrderPrice = orders[currentOrderIndex]?.price
-  let currentClonedOrderSize = orders[currentOrderIndex]?.size
-  currentOrderIndex++
+  const sign = isShort ? -1 : 1
   let matchedSize = 0
   let availableToTradeLeft = availableToTrade
+  // a market order matches what is left at the last price, a limit order only matches the levels it crosses
+  const isMarketOrder = limitPrice === null
+  const levels = isMarketOrder && !orders.length ? [{ price: markPrice, size: 0 }] : orders
 
-  while (currentClonedOrderPrice !== undefined && currentClonedOrderSize !== undefined) {
-    const sign = isShort ? -1 : 1
-    const OBPrice = currentClonedOrderPrice
+  for (const [index, order] of levels.entries()) {
+    // limit: the first level the order doesn't cross, nothing past it can fill so the postable cap applies
+    if (!isMarketOrder && (isShort ? order.price < limitPrice : order.price > limitPrice)) {
+      return null
+    }
+
     // this isn't really a price but we use it to divide a $ amount to get a size
-    const adjustedPrice = markPrice / leverage - sign * (markPrice - OBPrice) + takerFee * OBPrice
-    // In integration tests, mark price could be 32k and OB price is 2800 which makes no sense, but in this case it would make this value negative
-    // In that case the maxSize is basically infinity
-    const maxSizeForThisPrice = adjustedPrice <= 0 ? Infinity : availableToTradeLeft / adjustedPrice
-    const matchedOrderSize = Math.min(currentClonedOrderSize, maxSizeForThisPrice)
+    // a mark far from the book price would make it 0 or negative (infinite size), so the pnl can at most take 90% off the margin at the book price
+    const adjustedPrice = Math.max(
+      markPrice / leverage - sign * (markPrice - order.price) + takerFee * order.price,
+      (order.price / leverage) * 0.1,
+    )
+    const maxSizeForThisPrice = availableToTradeLeft / adjustedPrice
+    const isLastOrder = index === levels.length - 1
+    const matchedOrderSize =
+      isMarketOrder && isLastOrder ? maxSizeForThisPrice : Math.min(order.size, maxSizeForThisPrice)
 
     const imr = computeMarginReq(matchedOrderSize, markPrice, initialMarginFraction)
-    const unrealizedPnl = matchedOrderSize * sign * (markPrice - OBPrice)
-    const fees = matchedOrderSize * takerFee * OBPrice
+    const unrealizedPnl = matchedOrderSize * sign * (markPrice - order.price)
+    const fees = matchedOrderSize * takerFee * order.price
 
     matchedSize += matchedOrderSize
     availableToTradeLeft -= imr
     availableToTradeLeft += unrealizedPnl
     availableToTradeLeft -= fees
 
+    // margin ran out on this level: the market remainder (always on the last level) or the limit's fillable cap
     if (matchedOrderSize === maxSizeForThisPrice) {
-      break
+      return floorNumber(matchedSize, market.size_decimals)
     }
-    currentClonedOrderPrice = orders[currentOrderIndex]?.price
-    currentClonedOrderSize = orders[currentOrderIndex]?.size
-    currentOrderIndex++
   }
 
-  // all the OB can be matched
-  if (currentOrderIndex >= orders.length && currentClonedOrderSize === undefined) {
-    return null
-  }
-  return floorNumber(matchedSize, market.size_decimals)
+  // a market order always exits above (the last level takes the remainder), so only a limit gets here:
+  // every crossed level fits in the margin, the rest rests in the book so the postable cap applies
+  return null
 }
 
 export const computePerpsSliderMaxBaseAmount = (
   userTier: ExtendedUserTier,
   currentMarket: OrderBookDetail,
   reduceOnly: boolean,
-  availableLiquidity: number,
   orderBookOrders: OrderbookItem[],
   markPrice: number | null,
   initialMarginFraction: number,
@@ -278,6 +287,8 @@ export const computePerpsSliderMaxBaseAmount = (
   availableMarginBaseAmount: number | null,
   feeTicks: { takerFeeTick: number; makerFeeTick: number } | null,
   timeInForce: TimeInForce,
+  feeTierConfigs: FeeTierConfigs,
+  limitPrice: number,
 ) => {
   if (availableMarginForMarketOrders === null || !markPrice || availableMarginBaseAmount === null) {
     return 0
@@ -307,18 +318,14 @@ export const computePerpsSliderMaxBaseAmount = (
     availableMarginForMarketOrders,
     isShort,
     feeTicks,
+    feeTierConfigs,
+    orderType === OrderType.Market ? null : limitPrice,
   )
 
   if (orderType === OrderType.Market) {
-    if (maxMatchableBaseAmount === null) {
-      return availableLiquidity
-    }
-
-    return Math.max(maxReduceOnlyValue, maxMatchableBaseAmount * 0.99)
+    return (maxMatchableBaseAmount ?? 0) * 0.99
   }
 
-  // for limit orders, we don't care that we can't match all of it because of liquidity as the rest of it goes in the orderbook
-  // we only care about the matching if there is enough liquidity and the order would fail with "not enough margin"
   if (maxMatchableBaseAmount === null) {
     return availableMarginBaseAmount * 0.99
   }
@@ -331,9 +338,65 @@ export const computePerpsSliderMaxBaseAmount = (
   )
 }
 
+export const computeSpotBuyBaseAmount = (
+  market: Pick<OrderBookDetail, 'size_decimals'>,
+  marginBudget: number,
+  price: number,
+  autoSupplyCredit: AutoSupplyCredit,
+) => {
+  const adjustedPrice = price - autoSupplyCredit.creditPerUnit
+  const creditedUnits = floorNumber(
+    adjustedPrice > 0
+      ? Math.min(autoSupplyCredit.maxUnits, marginBudget / adjustedPrice)
+      : autoSupplyCredit.maxUnits,
+    market.size_decimals,
+  )
+  const uncreditedUnits = floorNumber(
+    (marginBudget - creditedUnits * adjustedPrice) / price,
+    market.size_decimals,
+  )
+
+  return {
+    creditedUnits,
+    uncreditedUnits,
+    totalUnits: roundNumber(creditedUnits + uncreditedUnits, market.size_decimals),
+  }
+}
+
+export const getMaxMatchableSpotBuyBaseAmount = (
+  market: Pick<OrderBookDetail, 'size_decimals'>,
+  orders: OrderbookItem[],
+  availableToTrade: number,
+  autoSupplyCredit: AutoSupplyCredit,
+) => {
+  let matchedSize = 0
+  let availableToTradeLeft = availableToTrade
+  let creditedUnitsLeft = autoSupplyCredit.maxUnits
+
+  for (const [index, order] of orders.entries()) {
+    const { creditedUnits, totalUnits } = computeSpotBuyBaseAmount(
+      market,
+      availableToTradeLeft,
+      order.price,
+      { ...autoSupplyCredit, maxUnits: creditedUnitsLeft },
+    )
+
+    if (totalUnits <= order.size || index === orders.length - 1) {
+      return roundNumber(matchedSize + totalUnits, market.size_decimals)
+    }
+
+    const creditedSize = Math.min(order.size, creditedUnits)
+
+    matchedSize += order.size
+    availableToTradeLeft -= order.size * order.price - creditedSize * autoSupplyCredit.creditPerUnit
+    creditedUnitsLeft -= creditedSize
+  }
+
+  return 0
+}
+
 export const computeSpotSliderMaxBaseAmount = (
   currentMarket: OrderBookDetail,
-  availableLiquidity: number,
   orderBookOrders: OrderbookItem[],
   orderType: OrderType,
   isShort: boolean,
@@ -341,6 +404,8 @@ export const computeSpotSliderMaxBaseAmount = (
   availableToTradeLimit: number | null,
   conversionPrice: number,
   canPlaceLimitOrderFullAmount: boolean,
+  autoSupplyCredit: AutoSupplyCredit,
+  quoteBalance: AssetBalance | undefined,
 ) => {
   if (availableToTradeMarket === null || availableToTradeLimit === null) {
     return 0
@@ -349,7 +414,7 @@ export const computeSpotSliderMaxBaseAmount = (
   if (isShort) {
     switch (orderType) {
       case OrderType.Market:
-        return Math.min(availableToTradeMarket, availableLiquidity)
+        return availableToTradeMarket
       case OrderType.Limit:
       case OrderType.Scale:
       case OrderType.Twap:
@@ -359,28 +424,51 @@ export const computeSpotSliderMaxBaseAmount = (
     }
   }
 
+  if (!quoteBalance) {
+    return 0
+  }
+
   switch (orderType) {
     case OrderType.Market: {
-      const maxMatchableBaseAmount = matchQuoteAmount(
+      const maxMatchableBaseAmount = getMaxMatchableSpotBuyBaseAmount(
         currentMarket,
+        orderBookOrders,
         availableToTradeMarket,
+        autoSupplyCredit,
+      )
+      const usdcMatchableBaseAmount = matchQuoteAmount(
+        currentMarket,
+        quoteBalance.balance + quoteBalance.margin_balance,
         orderBookOrders,
       ).baseAmount
 
-      if (availableLiquidity === maxMatchableBaseAmount) {
-        return availableLiquidity
-      }
+      const maxBaseAmount = Math.min(maxMatchableBaseAmount, usdcMatchableBaseAmount)
 
-      return maxMatchableBaseAmount * 0.995
+      return roundNumber(maxBaseAmount * 0.995, currentMarket.size_decimals)
     }
     case OrderType.Limit:
     case OrderType.Scale:
     case OrderType.Twap: {
+      const maxBaseAmount = Math.min(
+        computeSpotBuyBaseAmount(
+          currentMarket,
+          availableToTradeLimit,
+          conversionPrice,
+          autoSupplyCredit,
+        ).totalUnits,
+        computeSpotBuyBaseAmount(
+          currentMarket,
+          quoteBalance.available_balance + quoteBalance.available_margin_balance,
+          conversionPrice,
+          NO_AUTO_SUPPLY_CREDIT,
+        ).totalUnits,
+      )
+
       if (canPlaceLimitOrderFullAmount) {
-        return availableToTradeLimit / conversionPrice
+        return maxBaseAmount
       }
 
-      return (availableToTradeLimit / conversionPrice) * 0.995
+      return roundNumber(maxBaseAmount * 0.995, currentMarket.size_decimals)
     }
     default:
       return 0 as never

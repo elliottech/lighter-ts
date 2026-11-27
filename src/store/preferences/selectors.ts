@@ -11,6 +11,9 @@ export const selectMarketTradesFilterBy = (state: PreferencesSlice) =>
 
 export const selectMaxSlippage = (state: PreferencesSlice) => state.preferences.maxSlippage
 
+export const selectBOPriceTolerance = (state: PreferencesSlice) =>
+  state.preferences.boPriceTolerance
+
 export const selectMaxSLTPSlippage = (state: PreferencesSlice) => state.preferences.maxSLTPSlippage
 
 export const selectConditionalLimitPrefill = (state: PreferencesSlice) =>
@@ -53,3 +56,6 @@ export const selectCurrentRfqIds = (state: PreferencesSlice) => state.preference
 
 export const selectRfqOrderBookSnapshots = (state: PreferencesSlice) =>
   state.preferences.rfqOrderBookSnapshots
+
+export const selectAggregateByOrder = (state: PreferencesSlice) =>
+  state.preferences.aggregateByOrder

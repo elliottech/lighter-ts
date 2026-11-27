@@ -1,10 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
-import {
-  AccountTradingMode,
-  selectUserAccountIndex,
-  updateAccountConfig,
-  useLighterStore,
-} from 'lighter-ts'
+import { selectUserAccountIndex, updateAccountConfig, useLighterStore } from 'lighter-ts'
+import { AccountTradingMode } from '../const/ACCOUNT_TRADING_MODE'
 
 interface ChangeAccountConfigMutationParams {
   accountTradingMode: number

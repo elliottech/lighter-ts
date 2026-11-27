@@ -4,8 +4,19 @@ export type Timeline = '1d' | '1w' | '1m' | '3m' | '6m' | 'ytd' | 'all-time'
 
 export const PNL_HOURLY_RETENTION_SECONDS = 10 * 24 * 60 * 60
 export const PNL_HOURLY_RETENTION_BUFFER_SECONDS = 1
-
 export const TIMELINES: Timeline[] = ['1d', '1w', '1m', '3m', '6m', 'ytd', 'all-time']
+
+const getUtcDayStartTimestamp = (date: Date) =>
+  getUnixTime(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())))
+
+export const getUtcDayEndTimestamp = (date: Date) =>
+  getUnixTime(
+    new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999),
+    ),
+  )
+
+const getUtcHourStartTimestamp = (date: Date) => Math.floor(getUnixTime(date) / 3600) * 3600
 
 export const getTimelineStartTimestamp = (timeline: Timeline) => {
   switch (timeline) {
@@ -23,6 +34,33 @@ export const getTimelineStartTimestamp = (timeline: Timeline) => {
     }
     case '6m': {
       return getUnixTime(subDuration(startOfMinute(new Date()), { months: 6 }))
+    }
+    case 'ytd': {
+      const currentYear = new Date().getUTCFullYear()
+      return getUnixTime(new Date(Date.UTC(currentYear, 0, 1)))
+    }
+    case 'all-time': {
+      return getUnixTime(new Date(Date.UTC(2025, 0, 16)))
+    }
+  }
+}
+
+export const getAccountPnlStartTimestamp = (timeline: Timeline) => {
+  switch (timeline) {
+    case '1d': {
+      return getUtcHourStartTimestamp(subDuration(new Date(), { days: 1 }))
+    }
+    case '1w': {
+      return getUtcHourStartTimestamp(subDuration(new Date(), { weeks: 1 }))
+    }
+    case '1m': {
+      return getUtcDayStartTimestamp(subDuration(new Date(), { months: 1 }))
+    }
+    case '3m': {
+      return getUtcDayStartTimestamp(subDuration(new Date(), { months: 3 }))
+    }
+    case '6m': {
+      return getUtcDayStartTimestamp(subDuration(new Date(), { months: 6 }))
     }
     case 'ytd': {
       const currentYear = new Date().getUTCFullYear()
@@ -90,9 +128,13 @@ export type TypeSelector = (typeof TYPE_SELECTOR_OPTIONS)[number]
 export type TypeSelectorOption = (typeof TYPE_SELECTOR_OPTIONS)[number]['key']
 
 export const TYPE_SELECTOR_OPTIONS = [
-  { key: 'total_pnl', titleKey: 'total_equity_title' },
-  { key: 'trade_spot_pnl', titleKey: 'spot_equity_title' },
-  { key: 'trade_pnl', titleKey: 'perps_equity_title' },
-  { key: 'pool_pnl', titleKey: 'public_pool_equity_title' },
-  { key: 'staking_pnl', titleKey: 'staking_equity_title' },
+  { key: 'total', titleKey: 'total' },
+  { key: 'trade', titleKey: 'trade' },
+  { key: 'pool', titleKey: 'public_pools' },
+  { key: 'staking', titleKey: 'staking' },
 ] as const
+
+export const resolveTypeSelector = (
+  options: readonly TypeSelector[],
+  key: string | undefined,
+): TypeSelector => options.find((option) => option.key === key) ?? TYPE_SELECTOR_OPTIONS[0]

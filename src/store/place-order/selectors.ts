@@ -1,5 +1,5 @@
+import { AccountPositionMarginModeEnum } from 'zklighter-perps'
 import { OrderDirections } from '../../constants/shared'
-import { MarginMode } from '../../types/MarginMode'
 import { OrderType } from '../../types/order'
 import { isMarketIsolatedOnly } from '../../utils/marketFlags'
 import { selectCurrentMarketPosition } from '../accounts/selectors'
@@ -22,7 +22,7 @@ import type { PlaceOrderSlice } from './createPlaceOrderSlice'
 
 export const selectTriggerPriceInputValue = (state: PlaceOrderSlice) => state.triggerPriceInputValue
 
-export const selectTimeInForce = (state: PlaceOrderSlice) => state.timeInForce
+export { selectTimeInForce } from '../params/selectors'
 
 export const selectTimeInForceValue = (state: PlaceOrderSlice) => state.timeInForceValue
 
@@ -95,6 +95,6 @@ export const selectReduceOnly = createSelector(
         (isOpenInterestLimitReached && !isLimit) ||
         (isMarketIsolatedOnly(currentMarket) &&
           !!position?.position &&
-          position.margin_mode === MarginMode.CROSS)),
+          position.margin_mode === AccountPositionMarginModeEnum.Cross)),
   ),
 )
