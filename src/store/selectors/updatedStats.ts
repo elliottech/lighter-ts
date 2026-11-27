@@ -17,12 +17,12 @@ import {
   selectRawPositions,
 } from '../accounts/selectors'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
+import { selectPerpsOrderBookMetas } from '../orderbook/metadataSelectors'
 import {
   selectCurrentMarket,
   selectCurrentMarketId,
   selectCurrentMarketMarkPrice,
   selectPerpsMarketsStats,
-  selectPerpsOrderBookMetas,
 } from '../orderbook/selectors'
 import type {
   OptionalAccountIndex,

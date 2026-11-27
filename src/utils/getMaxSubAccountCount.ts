@@ -1,5 +1,5 @@
 import type { ExtendedUserTier } from '../types/user-tiers'
-import { isRobinhoodEnv } from '../lib/env'
+import { isRobinhoodLimits } from '../lib/env'
 
 // Mirrors the BE UserTiers config (MaxSubAccountCount); sub-accounts and public
 // pools both count toward the limit, the main account does not. Robinhood keeps
@@ -13,7 +13,7 @@ export const MAX_SUB_ACCOUNTS_BY_TIER = {
 const ROBINHOOD_MAX_SUB_ACCOUNT_COUNT = 8
 
 export const getMaxSubAccountCount = (tier: ExtendedUserTier): number => {
-  if (isRobinhoodEnv()) {
+  if (isRobinhoodLimits()) {
     return ROBINHOOD_MAX_SUB_ACCOUNT_COUNT
   }
   if (!tier || tier === 'standard') {

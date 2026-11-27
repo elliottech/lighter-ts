@@ -17,18 +17,22 @@ This package ships with no API clients, no storage, no crypto, and no signers.
 The host application injects all of them at boot:
 
 ```ts
-import { initCommonPackage } from '@elliottech/react-store'
+import { createApis, initCommonPackage } from '@elliottech/react-store'
+import fallbacks from '@elliottech/react-store/fallbacks/current'
 
 initCommonPackage({
   env: 'mainnet',
+  // this env's snapshot, picked at build time (see fallbacks/README.md)
+  fallbacks,
   // storage — localStorage on web, AsyncStorage/MMKV on mobile
   getItem, setItem,
   // crypto — WebCrypto on web, a native module on mobile
   sha256,
-  // generated REST clients from `zklighter-perps`
-  accountApi, orderApi, infoApi, /* ...and the rest */
+  // generated REST clients from `zklighter-perps`, built from one Configuration
+  apiClients: createApis(configuration),
   // transaction signing (WASM on web, native on mobile)
-  signers, getApiKeyIndex, getPlatform, isRegistered,
+  signers, getApiKeyIndex, getPlatform, generateClientOrderIndex, isRegistered,
+  rpcToken,
   // host-side plumbing
   websocketConfigParam, captureException, showToastFromError,
 })
@@ -45,9 +49,9 @@ Zustand store, composed from nine slices. It exists the moment the module is
 imported, so it can be read from anywhere — React components, websocket handlers,
 plain functions — via `useLighterStore.getState()`.
 
-Because it's created at import time, it is seeded with the bundled snapshots in
+`initCommonPackage` seeds it with the env's snapshot from
 [`fallbacks/`](./fallbacks) so the app can render markets before the first network
-response arrives.
+response arrives. See [`fallbacks/README.md`](./fallbacks/README.md).
 
 ### 3. "Real" and "display" numbers are different numbers
 
@@ -109,10 +113,11 @@ websocket bridge, the init hooks, and [`actions/`](./actions).
 | [`types/`](./types) | Domain types, and the compatibility layer that narrows the generated `zklighter-perps` types. |
 | [`lib/`](./lib) | The dependency-injection registry — mutable singletons filled in by `initCommonPackage`. |
 | [`hooks/`](./hooks) | The four react-query hooks that load reference data (tokens, markets, assets, L1 info) into the store. |
-| [`fallbacks/`](./fallbacks) | Bundled JSON snapshots of market/asset/token metadata, so the store is populated at import time. |
+| [`fallbacks/`](./fallbacks) | Per-env JSON snapshots of market/asset/token metadata, which the app passes to `initCommonPackage`. |
 | `constants/` | Shared constants: protocol addresses, tx statuses, slippage limits, date formats, and the field lists used to trim API payloads. |
 | `actions/` | Imperative store writes that are too stateful for a selector. |
 | `images/` | CDN URL builders for token and chain icons. No bundled image assets. |
+| `strategies/` | The order strategies (Chase, Iceberg, Advanced TWAP): the engines, the worker that runs them, and the standalone server. It is exported from the package root rather than from this directory's `index.ts`, because it imports that barrel. |
 | `testing/` | `isTestingEnvironment()` — a single flag read from `process.env.VITE_PLAYWRIGHT`. |
 
 ## Conventions
@@ -122,7 +127,7 @@ websocket bridge, the init hooks, and [`actions/`](./actions).
   root; the deep paths are an implementation detail.
 - **`select*` is a selector**, takes `(state)` or `(state, params)`, and is
   memoized. `compute*` is a pure formula and takes plain values.
-- **Enums are const objects.** `MarginMode`, `OrderType`, and friends use the
+- **Enums are const objects.** `OrderType` and friends use the
   `as const` + lookup-type pattern rather than TS `enum`, so they survive
   `isolatedModules` and erase cleanly.
 - **Tests** are colocated as `*.test.ts` and run with `vitest`.

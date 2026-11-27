@@ -5,6 +5,7 @@ import { createOrderBookSlice, type OrderBookSlice } from './orderbook/createOrd
 import { createAccountsSlice, type AccountsSlice } from './accounts/createAccountsSlice'
 import { createAgentSlice, type AgentSlice } from './agent/createAgentSlice'
 import { createPlaceOrderSlice, type PlaceOrderSlice } from './place-order/createPlaceOrderSlice'
+import { createBOSlice, type BOSlice } from './bo/createBOSlice'
 import {
   createRepeatOrderPrefillSlice,
   type RepeatOrderPrefillSlice,
@@ -24,7 +25,8 @@ export type LighterStore = UserSlice &
   RepeatOrderPrefillSlice &
   PreferencesSlice &
   TableFiltersSlice &
-  TokensSlice
+  TokensSlice &
+  BOSlice
 
 export const useLighterStore = create<LighterStore>()(
   subscribeWithSelector((...args) => ({
@@ -37,6 +39,7 @@ export const useLighterStore = create<LighterStore>()(
     ...createPreferencesSlice(...args),
     ...createTableFiltersSlice(...args),
     ...createTokensSlice(...args),
+    ...createBOSlice(...args),
   })),
 )
 export type LighterStoreWithSubscribe = typeof useLighterStore

@@ -14,6 +14,7 @@ export type AccountExistence =
   | 'DepositInProgress'
   | 'Creating'
   | 'Exists'
+  | 'Ghost'
 
 export type CloseAllPositionsFilter = 'all' | 'profitable' | 'lossMaking'
 
@@ -25,6 +26,7 @@ export type TradeChartSection =
   | 'order_book'
   | 'trades'
   | 'financials'
+  | 'dividends'
 
 export interface UserSlice {
   accountIndex: number
@@ -44,7 +46,6 @@ export interface UserSlice {
   showOnboarding: boolean
   showWalletOptions: boolean
   showReferralModal: boolean
-  showAirdropModal: boolean
   showFeeTiersModal: boolean
   showFeedback: boolean
   showAdjustSlippage: boolean
@@ -58,6 +59,7 @@ export interface UserSlice {
   closeAllPositionsFilter: CloseAllPositionsFilter
   showAnnouncementHistory: boolean
   showReferralInfo: boolean
+  referralInfoSource: string | null
   showReferralPoints: boolean
   showAccountTierSwitch: boolean
   showConfirmOrder: boolean
@@ -72,6 +74,29 @@ export interface UserSlice {
   tradeChartSection: TradeChartSection
 }
 
+export const accountChangeModalDefaults = {
+  closeAllPositionsFilter: 'all',
+  referralInfoSource: null,
+  showAccountTierSwitch: false,
+  showAccountTradingModeModal: false,
+  showAdjustAtomicSlippage: false,
+  showAdjustSLTPSlippage: false,
+  showAdjustSlippage: false,
+  showCloseAllPositionsModal: false,
+  showConfirmOrder: false,
+  showCreateSubAccount: false,
+  showFeeTiersModal: false,
+  showFeedback: false,
+  showLeverageModalByMarket: null,
+  showMarginModeModal: false,
+  showReferralInfo: false,
+  showReversePositionModal: false,
+  showSpotPerpsTransferModal: false,
+  showTransferModal: false,
+  spotPerpsTransferModalFrom: RouteType.Spot,
+  transferModalToAccountIndex: 0,
+} as const satisfies Partial<UserSlice>
+
 export const createUserSlice: StateCreator<UserSlice, [], [], UserSlice> = () => ({
   accountIndex: 0,
   l1Address: '',
@@ -84,32 +109,13 @@ export const createUserSlice: StateCreator<UserSlice, [], [], UserSlice> = () =>
   proof: null,
   didJustConnect: false,
   showMarketSelector: false,
-  showOnboarding: false,
   showWalletOptions: false,
   showReferralModal: false,
-  showAirdropModal: false,
-  showFeeTiersModal: false,
-  showFeedback: false,
-  showAdjustSlippage: false,
-  showAdjustSLTPSlippage: false,
-  showAdjustAtomicSlippage: false,
-  showMarginModeModal: false,
-  showAccountTradingModeModal: false,
-  showReversePositionModal: false,
-  showLeverageModalByMarket: null,
-  showCloseAllPositionsModal: false,
-  closeAllPositionsFilter: 'all',
+  showOnboarding: false,
+  ...accountChangeModalDefaults,
   showAnnouncementHistory: false,
-  showReferralInfo: false,
   showReferralPoints: false,
-  showAccountTierSwitch: false,
-  showConfirmOrder: false,
-  showSpotPerpsTransferModal: false,
-  spotPerpsTransferModalFrom: RouteType.Spot,
-  transferModalToAccountIndex: 0,
   mobileLoginSignature: null,
-  showCreateSubAccount: false,
-  showTransferModal: false,
   showAWSWAFCaptcha: false,
   orderTypesEducationType: null,
   tradeChartSection: 'price',

@@ -1,33 +1,30 @@
-import { keyBy } from 'lodash-es'
-import type { Layer1BasicInfo, SystemConfig, Token as ApiToken } from 'zklighter-perps'
+import type { EventOrderBookEntry, FeeTiers, Layer1BasicInfo, SystemConfig } from 'zklighter-perps'
 import type { StateCreator } from 'zustand'
 
-import {
-  assetMetasFallback,
-  l1InfoFallback,
-  orderBookMetasFallback,
-  systemConfigFallback,
-  tokensFallback,
-} from '../../fallbacks'
+import { defaultL1Info, defaultSystemConfig } from '../../fallbacks/defaults'
+import type { BackendFeeTiers } from '../../types/user-tiers'
+
 import type {
   WsAssetStats,
+  WsBOMarketStats,
   WsOrderbook,
   WsPerpsMarketStats,
   WsSpotMarketStats,
 } from '../../lighter-ws/types/WsMessage'
+import type { UpDownPriceCandle } from '../../ws-sub-store/upDownPrice'
 import type {
   AssetMeta,
   PerpsOrderBookDetail,
   SpotOrderBookDetail,
 } from '../../types/compatibility'
-import { normalizeTokens } from '../../utils/normalizeTokens'
-import { withDisplaySymbol } from '../../utils/withDisplaySymbol'
 import type { Trade } from '../types'
 
 import type { ExtendedCandlestick } from './types'
 
 export interface OrderBookSlice {
   systemConfig: SystemConfig
+  feeTiers: FeeTiers | null
+  fallbackFeeTiers: BackendFeeTiers | null
   l1Info: Layer1BasicInfo
   perpsOrderBookMetas: Record<string, PerpsOrderBookDetail>
   spotOrderBookMetas: Record<string, SpotOrderBookDetail>
@@ -36,58 +33,45 @@ export interface OrderBookSlice {
   assetMetas: Record<string, AssetMeta>
   perpsMarketsStats: Record<string, WsPerpsMarketStats>
   spotMarketsStats: Record<string, WsSpotMarketStats>
+  boMarketsStats: Record<string, WsBOMarketStats>
+  upDownCandles: Record<string, UpDownPriceCandle[]>
   assetsStats: Record<string, WsAssetStats>
   l1AssetBalances: Record<string, number>
   currentMarketId: number
+  currentBOMarket: EventOrderBookEntry | undefined
   trades: Trade[] | null
   // Live candlesticks bucketed by `${marketId}/${obResolution}` (see getCandleKey).
   newCandlesticksByKey: Record<string, ExtendedCandlestick[]>
   liquidationTrades: Trade[] | null
   orderBook: WsOrderbook | null
+  // The socket closed since this book's snapshot. It stays on screen but must
+  // not price an order until the resubscribe snapshot replaces it.
+  orderBookStale: boolean
   height: number | null
 }
 
-const fallbackDisplaySymbols = Object.fromEntries(
-  normalizeTokens(tokensFallback.tokens as ApiToken[]).map((token) => [
-    token.backend_symbol,
-    token.symbol,
-  ]),
-)
-
 export const createOrderBookSlice: StateCreator<OrderBookSlice, [], [], OrderBookSlice> = () => ({
-  systemConfig: systemConfigFallback,
-  l1Info: l1InfoFallback,
-  perpsOrderBookMetas: keyBy(
-    (
-      orderBookMetasFallback.order_book_details as Omit<PerpsOrderBookDetail, 'backend_symbol'>[]
-    ).map((detail) => withDisplaySymbol(detail, fallbackDisplaySymbols)),
-    'market_id',
-  ),
-  spotOrderBookMetas: keyBy(
-    (
-      orderBookMetasFallback.spot_order_book_details as Omit<
-        SpotOrderBookDetail,
-        'backend_symbol'
-      >[]
-    ).map((detail) => withDisplaySymbol(detail, fallbackDisplaySymbols)),
-    'market_id',
-  ),
+  systemConfig: defaultSystemConfig,
+  feeTiers: null,
+  fallbackFeeTiers: null,
+  l1Info: defaultL1Info,
+  perpsOrderBookMetas: {},
+  spotOrderBookMetas: {},
   orderBookMetasLoaded: false,
   assetMetasLoaded: false,
-  assetMetas: keyBy(
-    (assetMetasFallback.asset_details as Omit<AssetMeta, 'backend_symbol'>[]).map((detail) =>
-      withDisplaySymbol(detail, fallbackDisplaySymbols),
-    ),
-    'asset_id',
-  ),
+  assetMetas: {},
   perpsMarketsStats: {},
   spotMarketsStats: {},
+  boMarketsStats: {},
+  upDownCandles: {},
   assetsStats: {},
   l1AssetBalances: {},
   currentMarketId: -1,
+  currentBOMarket: undefined,
   trades: null,
   newCandlesticksByKey: {},
   liquidationTrades: null,
   orderBook: null,
+  orderBookStale: false,
   height: null,
 })

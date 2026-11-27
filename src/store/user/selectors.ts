@@ -15,6 +15,15 @@ export const selectProof = (state: UserSlice) => state.proof
 
 export const selectAccountExistence = (state: UserSlice) => state.accountExistence
 
+export const selectCanLoadAccountPnl = createSelector(
+  [selectAccountExistence, selectUserAccountIndex],
+  createTracking(
+    'selectCanLoadAccountPnl',
+    (accountExistence, accountIndex) =>
+      accountExistence === 'Exists' || (accountExistence === 'Ghost' && accountIndex > 0),
+  ),
+)
+
 export const selectL1Initialized = (state: UserSlice) => state.l1Initialized
 
 export const selectShowMarketSelector = (state: UserSlice) => state.showMarketSelector
@@ -50,6 +59,8 @@ export const selectShowCloseAllPositionsModal = (state: UserSlice) =>
 export const selectCloseAllPositionsFilter = (state: UserSlice) => state.closeAllPositionsFilter
 
 export const selectShowReferralInfo = (state: UserSlice) => state.showReferralInfo
+
+export const selectReferralInfoSource = (state: UserSlice) => state.referralInfoSource
 
 export const selectShowAccountTierSwitch = (state: UserSlice) => state.showAccountTierSwitch
 
@@ -88,6 +99,23 @@ export const selectTotalEffectiveLit = createSelector(
   [selectEffectiveLit, selectLeasedLit],
   createTracking('selectTotalEffectiveLit', (effectiveLit, leasedLit) => effectiveLit + leasedLit),
 )
+
+// Share of the market fee the account pays on binary options: BO volume tier × LIT staking discount
+export const selectBOAccountFeeRate = createSelector(
+  [selectAccountLimits],
+  createTracking('selectBOAccountFeeRate', (accountLimits) => accountLimits?.bo_fee_rate ?? 1),
+)
+
+export const selectBOAccountFeeRates = createSelector(
+  [selectAccountLimits],
+  createTracking('selectBOAccountFeeRates', (accountLimits) => ({
+    taker: accountLimits?.bo_fee_rate ?? 1,
+    maker: accountLimits?.bo_maker_fee_rate ?? 1,
+  })),
+)
+
+export const selectBOUserTierName = (state: UserSlice) =>
+  state.accountLimits?.bo_user_tier_name ?? null
 
 export const selectFeeTicks = createSelector(
   [selectAccountLimits],

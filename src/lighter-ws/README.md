@@ -25,6 +25,8 @@ The constructor connects immediately. Query parameters (`encoding`, `readonly`,
 `binaryType` is set to `arraybuffer`.
 
 The surface is deliberately small: `sendMessage(message)` and `close()`.
+`close()` detaches the handlers before closing, so `onClose` and `onMessage` do
+not fire for a socket the caller closed itself. The caller does its own teardown.
 Subscription bookkeeping, acknowledgement tracking and retry are **not** handled
 here — they belong to [`../ws-sub-store`](../ws-sub-store), which owns the
 connection lifecycle. This directory contributes only the backoff schedule

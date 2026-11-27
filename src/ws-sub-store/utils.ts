@@ -1,5 +1,13 @@
-import { mapValues, omit, partition, pickBy, uniqBy } from 'lodash-es'
-import { RfqListStatusEnum, TradeTypeEnum } from 'zklighter-perps'
+import { isEmpty, mapValues, omit, partition, pickBy, uniqBy } from 'lodash-es'
+import {
+  type AccountAsset,
+  AccountPositionMarginModeEnum,
+  BinaryOptionMarketStatsStatusEnum,
+  OrderMarketKindEnum,
+  RfqListStatusEnum,
+  TradeMarketKindEnum,
+  TradeTypeEnum,
+} from 'zklighter-perps'
 import type { ExtendedCandlestick } from '../store/orderbook/types'
 import {
   candleToCandlestick,
@@ -9,27 +17,26 @@ import {
   withMidPriceOnLiveCandlestick,
   withPreviousRange,
 } from '../utils/candlesticks'
-import {
-  selectAllowedAssetIds,
-  selectAllowedMarketIds,
-  selectPerpsOrderBookMetas,
-} from '../store/orderbook/selectors'
+import { selectPerpsOrderBookMetas } from '../store/orderbook/metadataSelectors'
+import { selectAllowedAssetIds, selectAllowedMarketIds } from '../store/orderbook/selectors'
 import { useLighterStore } from '../store/useLighterStore'
 import type { Account, Tx } from '../store/types'
 import type {
   WsAckAgentMessage,
   WsAgentAnsweredQA,
   WsAgentPendingQA,
+  WsAssetBalance,
   WsAssetStats,
+  WsBOMarketStats,
   WsErrorMessage,
   WsMessage,
   WsNotification as WsNotificationType,
   WsOrder,
   WsOrderbook,
   WsOrderbookItem,
+  WsBOPosition,
   WsPerpsMarketStats,
   WsPoolInfo,
-  WsPosition,
   WsRfq,
   WsShare,
   WsSpotMarketStats,
@@ -39,6 +46,7 @@ import type {
   WsSubscribedAgentMessage,
   WsSubscribedAssetBalancesMessage,
   WsSubscribedAssetStatsMessage,
+  WsSubscribedBOMarketStatsMessage,
   WsSubscribedCandleMessage,
   WsSubscribedHeightMessage,
   WsSubscribedLivePointsMessage,
@@ -50,6 +58,7 @@ import type {
   WsSubscribedSpotAvgEntryPricesMessage,
   WsSubscribedSpotMarketStatsMessage,
   WsSubscribedTradeMessage,
+  WsSubscribedUpDownCandleMessage,
   WsSubscribeNotificationMessage,
   WsTrade,
   WsUpdateAccountOrdersMessage,
@@ -58,6 +67,7 @@ import type {
   WsUpdateAgentMessage,
   WsUpdateAssetBalancesMessage,
   WsUpdateAssetStatsMessage,
+  WsUpdateBOMarketStatsMessage,
   WsUpdateCandleMessage,
   WsUpdateExecutedTransactionMessage,
   WsUpdateHeightMessage,
@@ -71,12 +81,14 @@ import type {
   WsUpdateSpotAvgEntryPricesMessage,
   WsUpdateSpotMarketStatsMessage,
   WsUpdateTradeMessage,
+  WsUpdateUpDownCandleMessage,
 } from '../lighter-ws/types/WsMessage'
+import { transformAssetBalance } from '../lighter-ws/utils/transformWsMessage'
 import { isOrderActive } from '../utils/isOrderActive'
 import { setCurrentRfqId } from '../actions/rfq'
 import { getMarketDisplayPrice } from '../utils/getMarketDisplayPrice'
+import { reduceAccountPositions } from './reduceAccountPositions'
 import { websocketConfig } from './websocketConfig'
-import { MarginMode } from '../types/MarginMode'
 import { getDefaultMarketMarginModeFromFlags } from '../utils/marketFlags'
 import { DRAFT_RFQ_ID } from '../constants/order'
 import {
@@ -84,6 +96,11 @@ import {
   type AgentExchange,
   type AgentThread,
 } from '../store/agent/createAgentSlice'
+import {
+  UP_DOWN_LIVE_CANDLE_LIMIT,
+  getUpDownCandleKeyFromChannel,
+  upsertUpDownCandles,
+} from './upDownPrice'
 
 const getChannelParts = (channel: string) => channel.split(/[/:]/)
 
@@ -113,6 +130,20 @@ const checkMarketIndexFromChannel = (channel: string, currentId: number) => {
   return marketPart !== 'all' && currentId !== Number(marketPart)
 }
 
+// Server acks and updates spell the channel with ':' separators; the store
+// keys its subscriptions with '/'.
+export const getSubscribedChannelKey = (channel: string) => channel.replace(/:/g, '/')
+
+// The server pushes account channels to any session; only channels this client
+// requested (and has not unsubscribed) may reach the store.
+export const isWsMessageForSubscribedChannel = (
+  message: WsMessage,
+  channels: Record<string, unknown>,
+) =>
+  !('channel' in message) ||
+  typeof message.channel !== 'string' ||
+  getSubscribedChannelKey(message.channel) in channels
+
 const getAccountIndexFromChannel = (channel: string) => {
   const accountIndex = Number(getChannelParts(channel)[1])
 
@@ -124,15 +155,33 @@ const filterUnavailableMarkets = <T>(entity: Record<string, T>) => {
   return pickBy(entity, (_, key) => allowedIds.has(Number(key)))
 }
 
+const partitionBOMarkets = <T extends { market_kind: OrderMarketKindEnum | TradeMarketKindEnum }>(
+  entity: Record<string, T[]>,
+) => {
+  const boEntity: Record<string, T[]> = {}
+  const restEntity: Record<string, T[]> = {}
+  Object.entries(entity).forEach(([marketId, records]) => {
+    const [boRecords, restRecords] = partition(
+      records,
+      (record) => record.market_kind === OrderMarketKindEnum.Bo,
+    )
+    if (boRecords.length > 0) boEntity[marketId] = boRecords
+    if (restRecords.length > 0) restEntity[marketId] = restRecords
+  })
+  return { boEntity, restEntity: filterUnavailableMarkets(restEntity) }
+}
+
 // Market stats updates arrive frequently, so buffer them in place to avoid
 // recreating the full buffered map on every websocket message.
-const mergeInPlace = <T>(entity: Record<string, T>, target: Record<string, T>) => {
-  const allowedIds = selectAllowedMarketIds(useLighterStore.getState())
-
+// Stats are kept for every market, allowed or not: updates are partial, so a
+// market that becomes allowed later still needs its full record. Readers look
+// stats up by the id of an allowed market.
+const mergeInPlace = <T>(
+  entity: Record<string, Partial<T>>,
+  target: Record<string, Partial<T>>,
+) => {
   Object.entries(entity).forEach(([key, value]) => {
-    if (allowedIds.has(Number(key))) {
-      target[key] = value
-    }
+    target[key] = { ...target[key], ...value }
   })
 }
 
@@ -180,6 +229,14 @@ export const handleWsMessage = (
       return handleSubscribedSpotMarketStats(data)
     case 'update/spot_market_stats':
       return handleUpdateSpotMarketStats(data)
+    case 'subscribed/bo_market_stats':
+      return handleSubscribedBOMarketStats(data)
+    case 'update/bo_market_stats':
+      return handleUpdateBOMarketStats(data)
+    case 'subscribed/up_down_candle':
+      return handleSubscribedUpDownCandle(data)
+    case 'update/up_down_candle':
+      return handleUpdateUpDownCandle(data)
     case 'subscribed/asset_stats':
       return handleSubscribedAssetStats(data)
     case 'update/asset_stats':
@@ -247,8 +304,10 @@ let bufferedOrderbook: WsOrderbook = { asks: [], bids: [] }
 let bufferedTrades: WsTrade[] = []
 let bufferedNewCandlesticks: Record<string, ExtendedCandlestick[]> = {}
 let bufferedLiquidationTrades: WsTrade[] = []
-let bufferedPerpsMarketsStats: Record<string, WsPerpsMarketStats> = {}
-let bufferedSpotMarketsStats: Record<string, WsSpotMarketStats> = {}
+let bufferedPerpsMarketsStats: Record<string, Partial<WsPerpsMarketStats>> = {}
+let bufferedSpotMarketsStats: Record<string, Partial<WsSpotMarketStats>> = {}
+let bufferedBOMarketsStats: Record<string, Partial<WsBOMarketStats>> = {}
+const boMarketsStatsReceivedAt: Record<string, number> = {}
 let bufferedAssetsStats: Record<string, WsAssetStats> = {}
 let bufferedPoolInfo: Record<number, WsPoolInfo> = {}
 let bufferedLivePoints: Record<number, number> = {}
@@ -257,6 +316,7 @@ let perpsMarketsStatsTimestamp = 0
 let spotMarketsStatsTimestamp = 0
 
 const updateBufferedNewCandlesticks = (data: WsSubscribedCandleMessage | WsUpdateCandleMessage) => {
+  if (useLighterStore.getState().preferences.showMarkPriceCandles) return
   const marketId = getMarketIndexFromChannel(data.channel)
   const resolution = getCandleResolutionFromChannel(data.channel)
 
@@ -273,6 +333,7 @@ const updateBufferedNewCandlesticks = (data: WsSubscribedCandleMessage | WsUpdat
 const updateBufferedNewMarkPriceCandlesticks = (
   data: WsSubscribedMarkPriceCandleMessage | WsUpdateMarkPriceCandleMessage,
 ) => {
+  if (!useLighterStore.getState().preferences.showMarkPriceCandles) return
   const marketId = getMarketIndexFromChannel(data.channel)
   const resolution = getCandleResolutionFromChannel(data.channel)
 
@@ -412,29 +473,52 @@ const reduceNewCandlesticks = (
   return nextCandlesticksByKey
 }
 
-const reducePerpsMarketsStats = (
-  newPerpsMarketsStats: Record<string, WsPerpsMarketStats>,
-  previousPrepsMarketsStats: Record<string, WsPerpsMarketStats>,
-) => ({ ...previousPrepsMarketsStats, ...newPerpsMarketsStats })
+const reduceMarketsStats = <T>(
+  newMarketsStats: Record<string, Partial<T>>,
+  previousMarketsStats: Record<string, T>,
+) => {
+  const marketsStats = { ...previousMarketsStats }
+  Object.entries(newMarketsStats).forEach(([marketId, stats]) => {
+    marketsStats[marketId] = { ...marketsStats[marketId], ...stats } as T
+  })
+  return marketsStats
+}
 
-const reduceSpotMarketsStats = (
-  newSpotMarketsStats: Record<string, WsSpotMarketStats>,
-  previousSpotMarketsStats: Record<string, WsSpotMarketStats>,
-) => ({ ...previousSpotMarketsStats, ...newSpotMarketsStats })
+const BO_INACTIVE_STATS_TTL_MS = 10 * 60 * 1000
+
+const reduceBOMarketsStats = (
+  newBOMarketsStats: Record<string, Partial<WsBOMarketStats>>,
+  previousBOMarketsStats: Record<string, WsBOMarketStats>,
+  currentBOMarketId: number,
+) => {
+  const now = Date.now()
+  const mergedBOMarketsStats = reduceMarketsStats(newBOMarketsStats, previousBOMarketsStats)
+  return pickBy(mergedBOMarketsStats, (stats, marketId) => {
+    const isExpired =
+      Number(marketId) !== currentBOMarketId &&
+      stats.status === BinaryOptionMarketStatsStatusEnum.Settled &&
+      now - (boMarketsStatsReceivedAt[marketId] ?? now) >= BO_INACTIVE_STATS_TTL_MS
+    if (isExpired) delete boMarketsStatsReceivedAt[marketId]
+    return !isExpired
+  })
+}
 
 const reduceAssetsStats = (
   newAssetsStats: Record<string, WsAssetStats>,
   previousAssetsStats: Record<string, WsAssetStats>,
 ) => ({ ...previousAssetsStats, ...newAssetsStats })
 
-const reduceAccountOrders = (account: Account | undefined, orders: Record<string, WsOrder[]>) => {
-  const newAccount = { ...account }
-  newAccount.activeOrders = { ...newAccount.activeOrders }
-  newAccount.inactiveOrders = { ...newAccount.inactiveOrders }
+const mergeOrders = (
+  previousActiveOrders: Record<string, WsOrder[]> | undefined,
+  previousInactiveOrders: Record<string, WsOrder[]> | undefined,
+  orders: Record<string, WsOrder[]>,
+) => {
+  const activeOrders = { ...previousActiveOrders }
+  const inactiveOrders = { ...previousInactiveOrders }
 
   Object.keys(orders).forEach((marketId) => {
-    const oldActiveOrders = newAccount.activeOrders![marketId] ?? []
-    const oldInactiveOrders = newAccount.inactiveOrders![marketId] ?? []
+    const oldActiveOrders = activeOrders[marketId] ?? []
+    const oldInactiveOrders = inactiveOrders[marketId] ?? []
     const newOrders = orders[marketId] ?? []
 
     const [newActiveOrders, newInactiveOrders] = partition(newOrders, (order) => {
@@ -446,7 +530,7 @@ const reduceAccountOrders = (account: Account | undefined, orders: Record<string
     })
 
     const inactiveOrderIDs = new Set(newInactiveOrders.map((order) => order.order_id))
-    newAccount.activeOrders![marketId] = uniqBy(
+    activeOrders[marketId] = uniqBy(
       [
         // Prioritize new orders to handle modifications correctly (uniqBy keeps first occurrence)
         // Exclude orders that became inactive in this update
@@ -456,91 +540,78 @@ const reduceAccountOrders = (account: Account | undefined, orders: Record<string
       ],
       'order_id',
     )
-    newAccount.inactiveOrders![marketId] = uniqBy(
+    inactiveOrders[marketId] = uniqBy(
       [...newInactiveOrders, ...oldInactiveOrders],
       'order_id',
     ).slice(0, 50)
   })
+
+  return { activeOrders, inactiveOrders }
+}
+
+const reduceAccountOrders = (account: Account | undefined, orders: Record<string, WsOrder[]>) => {
+  const { boEntity, restEntity } = partitionBOMarkets(orders)
+  const newAccount = { ...account }
+
+  if (!isEmpty(restEntity)) {
+    const merged = mergeOrders(newAccount.activeOrders, newAccount.inactiveOrders, restEntity)
+    newAccount.activeOrders = merged.activeOrders
+    newAccount.inactiveOrders = merged.inactiveOrders
+  }
+
+  if (!isEmpty(boEntity)) {
+    const boMerged = mergeOrders(newAccount.boActiveOrders, newAccount.boInactiveOrders, boEntity)
+    newAccount.boActiveOrders = boMerged.activeOrders
+    newAccount.boInactiveOrders = boMerged.inactiveOrders
+  }
+
   return newAccount
 }
 
 const reduceAccountTrades = (account: Account | undefined, trades: Record<string, WsTrade[]>) => {
+  const { boEntity, restEntity } = partitionBOMarkets(trades)
   const newAccount = { ...account }
-  newAccount.trades = { ...newAccount.trades }
-  newAccount.weeklyVolume ??= 0
-  newAccount.monthlyVolume ??= 0
   newAccount.totalVolume ??= 0
-  newAccount.dailyVolume ??= 0
 
-  Object.keys(trades).forEach((marketId) => {
+  if (!isEmpty(restEntity)) newAccount.trades = { ...newAccount.trades }
+  Object.keys(restEntity).forEach((marketId) => {
     const oldMarketTrades = newAccount.trades![marketId] ?? []
-    const newMarketTrades = trades[marketId] ?? []
+    const newMarketTrades = restEntity[marketId] ?? []
     const marketUpdatedVolume = newMarketTrades.reduce((acc, trade) => acc + trade.usd_amount, 0)
 
     newAccount.trades![marketId] = [...newMarketTrades, ...oldMarketTrades].slice(0, 50)
 
-    newAccount.weeklyVolume! += marketUpdatedVolume
-    newAccount.monthlyVolume! += marketUpdatedVolume
     newAccount.totalVolume! += marketUpdatedVolume
-    newAccount.dailyVolume! += marketUpdatedVolume
   })
+
+  if (!isEmpty(boEntity)) newAccount.boTrades = { ...newAccount.boTrades }
+  Object.keys(boEntity).forEach((marketId) => {
+    const oldMarketTrades = newAccount.boTrades![marketId] ?? []
+    const newMarketTrades = boEntity[marketId] ?? []
+
+    newAccount.boTrades![marketId] = [...newMarketTrades, ...oldMarketTrades].slice(0, 50)
+    newAccount.totalVolume! += newMarketTrades.reduce((acc, trade) => acc + trade.usd_amount, 0)
+  })
+
   return newAccount
 }
 
-const reduceAccountVolume = (
-  account: Account | undefined,
-  weeklyVolume: number,
-  monthlyVolume: number,
-  totalVolume: number,
-  dailyVolume: number,
-) => {
+const reduceAccountVolume = (account: Account | undefined, totalVolume: number) => {
   const newAccount = { ...account }
-  newAccount.weeklyVolume = weeklyVolume
-  newAccount.monthlyVolume = monthlyVolume
   newAccount.totalVolume = totalVolume
-  newAccount.dailyVolume = dailyVolume
   return newAccount
 }
 
-const reduceAccountPositions = (
-  account: Account | undefined,
-  positions: Record<string, Omit<WsPosition, 'total_funding_paid_out' | 'total_discount'>>,
-  lastFundingRound?: Record<string, number>,
-  lastFundingDiscount?: Record<string, number>,
-) => {
+const reduceAccountBOPositions = (account: Account, boPositions: Record<string, WsBOPosition>) => {
   const newAccount = { ...account }
-  newAccount.positions = { ...newAccount.positions }
+  newAccount.boPositions = { ...newAccount.boPositions }
 
-  Object.keys(positions).forEach((marketId) => {
-    const oldPosition = newAccount.positions![marketId]
-    const newPosition = positions[marketId]!
-
-    // if position size is 0 or changes side, we need to reset total_funding_paid_out
-    if (!newPosition.position || (oldPosition && newPosition.sign !== oldPosition.sign)) {
-      newAccount.positions![marketId] = {
-        ...newPosition,
-        total_funding_paid_out: 0,
-        total_discount: 0,
-      }
+  Object.keys(boPositions).forEach((marketId) => {
+    const boPosition = boPositions[marketId]!
+    if (!boPosition.size) {
+      delete newAccount.boPositions![marketId]
     } else {
-      newAccount.positions![marketId] = {
-        ...oldPosition,
-        ...newPosition,
-        total_funding_paid_out: oldPosition?.total_funding_paid_out ?? 0,
-        total_discount: oldPosition?.total_discount ?? 0,
-      }
-    }
-  })
-
-  Object.entries(lastFundingRound ?? {}).forEach(([marketId, newFunding]) => {
-    if (newAccount.positions![marketId]) {
-      newAccount.positions![marketId].total_funding_paid_out += newFunding
-    }
-  })
-
-  Object.entries(lastFundingDiscount ?? {}).forEach(([marketId, newDiscount]) => {
-    if (newAccount.positions![marketId]) {
-      newAccount.positions![marketId].total_discount += newDiscount
+      newAccount.boPositions![marketId] = boPosition
     }
   })
   return newAccount
@@ -611,6 +682,68 @@ const clearDanglingRfqPointers = (accountIndex: number) => {
   })
 }
 
+type AccountUpdate = {
+  accountIndex: number
+  apply: (accounts: Record<number, Account>) => Record<number, Account>
+}
+
+let bufferedAccountUpdates: AccountUpdate[] = []
+let accountUpdatesTimeoutId: NodeJS.Timeout | null = null
+
+// Account channels deliver one message per fill / order event and, for the
+// user's own account, the server does not batch them. Committing each message
+// separately lets bursts (reconnect snapshots, fill storms, wallet switches)
+// produce one store notification and one React commit per message. Queue the
+// reducers instead and apply the whole window in one setState, preserving ws
+// arrival order. The window is short (accountThrottleInterval, default 50ms)
+// so a placed or cancelled order still shows up instantly.
+//
+// RFQ messages stay immediate: they are one message per quote event, the
+// server does not stream them, and the create-quote HTTP path writes the same
+// `rfqs` slice (confirmAccountRfq). A deferred `subscribed/rfq` snapshot could
+// otherwise land after that confirm and delete the newly created quote.
+const queueAccountUpdate = (accountIndex: number, apply: AccountUpdate['apply']) => {
+  bufferedAccountUpdates.push({ accountIndex, apply })
+  if (websocketConfig.accountThrottleInterval === null) {
+    flushAccountUpdates()
+  } else {
+    accountUpdatesTimeoutId ??= setTimeout(
+      flushAccountUpdates,
+      websocketConfig.accountThrottleInterval,
+    )
+  }
+}
+
+const flushAccountUpdates = () => {
+  accountUpdatesTimeoutId = null
+
+  if (bufferedAccountUpdates.length === 0) {
+    return
+  }
+
+  const updates = bufferedAccountUpdates
+  bufferedAccountUpdates = []
+
+  useLighterStore.setState((prevState) => ({
+    accounts: updates.reduce((accounts, { apply }) => apply(accounts), prevState.accounts),
+  }))
+}
+
+// A closed socket's queued tail must not land after teardown: the reconnect
+// snapshots re-seed every account slice. With an accountIndex, only that
+// account's pending updates are dropped (logout removes it from the store).
+export const clearBufferedAccountUpdates = (accountIndex?: number) => {
+  bufferedAccountUpdates =
+    accountIndex === undefined
+      ? []
+      : bufferedAccountUpdates.filter((update) => update.accountIndex !== accountIndex)
+
+  if (bufferedAccountUpdates.length === 0 && accountUpdatesTimeoutId !== null) {
+    clearTimeout(accountUpdatesTimeoutId)
+    accountUpdatesTimeoutId = null
+  }
+}
+
 let throttledDataIntervalId: NodeJS.Timeout | null = null
 
 const ensureThrottledDataPush = () => {
@@ -618,13 +751,14 @@ const ensureThrottledDataPush = () => {
     return
   }
 
-  throttledDataIntervalId = setInterval(() => {
+  const flushFn = () => {
     const hasTradeUpdates = bufferedTrades.length > 0
     const hasLiquidationTradesUpdates = bufferedLiquidationTrades.length > 0
     const hasOrderbookUpdates =
       bufferedOrderbook.asks.length > 0 || bufferedOrderbook.bids.length > 0
     const hasPerpsStatsUpdates = Object.keys(bufferedPerpsMarketsStats).length > 0
     const hasSpotStatsUpdates = Object.keys(bufferedSpotMarketsStats).length > 0
+    const hasBOStatsUpdates = Object.keys(bufferedBOMarketsStats).length > 0
     const hasAssetStatsUpdates = Object.keys(bufferedAssetsStats).length > 0
     const hasPoolInfoUpdates = Object.keys(bufferedPoolInfo).length > 0
     const hasLivePointsUpdates = Object.keys(bufferedLivePoints).length > 0
@@ -632,11 +766,18 @@ const ensureThrottledDataPush = () => {
 
     const state = useLighterStore.getState()
     const perpsMarketsStats = hasPerpsStatsUpdates
-      ? reducePerpsMarketsStats(bufferedPerpsMarketsStats, state.perpsMarketsStats)
+      ? reduceMarketsStats(bufferedPerpsMarketsStats, state.perpsMarketsStats)
       : state.perpsMarketsStats
     const spotMarketsStats = hasSpotStatsUpdates
-      ? reduceSpotMarketsStats(bufferedSpotMarketsStats, state.spotMarketsStats)
+      ? reduceMarketsStats(bufferedSpotMarketsStats, state.spotMarketsStats)
       : state.spotMarketsStats
+    const boMarketsStats = hasBOStatsUpdates
+      ? reduceBOMarketsStats(
+          bufferedBOMarketsStats,
+          state.boMarketsStats,
+          state.currentBOMarket?.market_id ?? -1,
+        )
+      : state.boMarketsStats
     const nextNewCandlesticksByKey = reduceNewCandlesticks(
       bufferedNewCandlesticks,
       state.newCandlesticksByKey,
@@ -662,6 +803,7 @@ const ensureThrottledDataPush = () => {
       hasOrderbookUpdates ||
       hasPerpsStatsUpdates ||
       hasSpotStatsUpdates ||
+      hasBOStatsUpdates ||
       hasAssetStatsUpdates ||
       hasPoolInfoUpdates ||
       hasLivePointsUpdates ||
@@ -708,6 +850,7 @@ const ensureThrottledDataPush = () => {
         ...(nextNewCandlesticksByKey && { newCandlesticksByKey: nextNewCandlesticksByKey }),
         ...(hasPerpsStatsUpdates && { perpsMarketsStats }),
         ...(hasSpotStatsUpdates && { spotMarketsStats }),
+        ...(hasBOStatsUpdates && { boMarketsStats }),
         ...(hasAssetStatsUpdates && {
           assetsStats: reduceAssetsStats(bufferedAssetsStats, prevState.assetsStats),
         }),
@@ -722,11 +865,17 @@ const ensureThrottledDataPush = () => {
     bufferedNewCandlesticks = {}
     bufferedPerpsMarketsStats = {}
     bufferedSpotMarketsStats = {}
+    bufferedBOMarketsStats = {}
     bufferedAssetsStats = {}
     bufferedPoolInfo = {}
     bufferedLivePoints = {}
     bufferedBlockHeight = null
-  }, websocketConfig.throttleInterval)
+  }
+  if (websocketConfig.throttleInterval === null) {
+    flushFn()
+  } else {
+    throttledDataIntervalId = setInterval(flushFn, websocketConfig.throttleInterval)
+  }
 }
 
 const handleSubscribedOrderBook = (data: WsSubscribedOrderBookMessage) => {
@@ -734,7 +883,7 @@ const handleSubscribedOrderBook = (data: WsSubscribedOrderBookMessage) => {
     return
   }
 
-  useLighterStore.setState({ orderBook: reduceOrderbook(data.order_book) })
+  useLighterStore.setState({ orderBook: reduceOrderbook(data.order_book), orderBookStale: false })
   bufferedOrderbook = { asks: [], bids: [] }
 
   ensureThrottledDataPush()
@@ -745,6 +894,7 @@ const handleUpdateOrderBook = (data: WsUpdateOrderBookMessage) => {
     return
   }
   bufferedOrderbook = reduceOrderbook(data.order_book, bufferedOrderbook, true)
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedTrade = (data: WsSubscribedTradeMessage) => {
@@ -769,6 +919,7 @@ const handleSubscribedCandle = (data: WsSubscribedCandleMessage) => {
 
 const handleUpdateCandle = (data: WsUpdateCandleMessage) => {
   updateBufferedNewCandlesticks(data)
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedMarkPriceCandle = (data: WsSubscribedMarkPriceCandleMessage) => {
@@ -778,6 +929,7 @@ const handleSubscribedMarkPriceCandle = (data: WsSubscribedMarkPriceCandleMessag
 
 const handleUpdateMarkPriceCandle = (data: WsUpdateMarkPriceCandleMessage) => {
   updateBufferedNewMarkPriceCandlesticks(data)
+  ensureThrottledDataPush()
 }
 
 const handleUpdateTrade = (data: WsUpdateTradeMessage) => {
@@ -790,11 +942,12 @@ const handleUpdateTrade = (data: WsUpdateTradeMessage) => {
     data.liquidation_trades ?? [],
     bufferedLiquidationTrades ?? undefined,
   )
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedPerpsMarketStats = (data: WsSubscribedPerpsMarketStatsMessage) => {
   useLighterStore.setState(() => ({
-    perpsMarketsStats: filterUnavailableMarkets(data.market_stats),
+    perpsMarketsStats: data.market_stats,
   }))
 
   bufferedPerpsMarketsStats = {}
@@ -805,11 +958,12 @@ const handleSubscribedPerpsMarketStats = (data: WsSubscribedPerpsMarketStatsMess
 const handleUpdatePerpsMarketStats = (data: WsUpdatePerpsMarketStatsMessage) => {
   mergeInPlace(data.market_stats, bufferedPerpsMarketsStats)
   perpsMarketsStatsTimestamp = data.timestamp
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedSpotMarketStats = (data: WsSubscribedSpotMarketStatsMessage) => {
   useLighterStore.setState(() => ({
-    spotMarketsStats: filterUnavailableMarkets(data.spot_market_stats),
+    spotMarketsStats: data.spot_market_stats,
   }))
 
   bufferedSpotMarketsStats = {}
@@ -820,6 +974,57 @@ const handleSubscribedSpotMarketStats = (data: WsSubscribedSpotMarketStatsMessag
 const handleUpdateSpotMarketStats = (data: WsUpdateSpotMarketStatsMessage) => {
   mergeInPlace(data.spot_market_stats, bufferedSpotMarketsStats)
   spotMarketsStatsTimestamp = data.timestamp
+  ensureThrottledDataPush()
+}
+
+// Unlike the other subscribe handlers, this one doesn't replace the previous data: BO stats may
+// already be seeded from the events REST responses, so the snapshot is merged in like an update.
+const handleSubscribedBOMarketStats = (data: WsSubscribedBOMarketStatsMessage) => {
+  handleUpdateBOMarketStats(data)
+}
+
+export const markBOMarketsStatsReceived = (marketIds: string[]) => {
+  const now = Date.now()
+  marketIds.forEach((marketId) => {
+    boMarketsStatsReceivedAt[marketId] = now
+  })
+}
+
+const handleUpdateBOMarketStats = (
+  data: WsSubscribedBOMarketStatsMessage | WsUpdateBOMarketStatsMessage,
+) => {
+  mergeInPlace(data.bo_market_stats, bufferedBOMarketsStats)
+  const now = Date.now()
+  Object.keys(data.bo_market_stats).forEach((marketId) => {
+    boMarketsStatsReceivedAt[marketId] = now
+  })
+  ensureThrottledDataPush()
+}
+
+const handleSubscribedUpDownCandle = (data: WsSubscribedUpDownCandleMessage) => {
+  const key = getUpDownCandleKeyFromChannel(data.channel)
+
+  useLighterStore.setState((state) => ({
+    upDownCandles: {
+      ...state.upDownCandles,
+      [key]: upsertUpDownCandles([], data.candles, UP_DOWN_LIVE_CANDLE_LIMIT),
+    },
+  }))
+}
+
+const handleUpdateUpDownCandle = (data: WsUpdateUpDownCandleMessage) => {
+  const key = getUpDownCandleKeyFromChannel(data.channel)
+
+  useLighterStore.setState((state) => ({
+    upDownCandles: {
+      ...state.upDownCandles,
+      [key]: upsertUpDownCandles(
+        state.upDownCandles[key] ?? [],
+        data.candles,
+        UP_DOWN_LIVE_CANDLE_LIMIT,
+      ),
+    },
+  }))
 }
 
 const handleSubscribedAssetStats = (data: WsSubscribedAssetStatsMessage) => {
@@ -834,39 +1039,27 @@ const handleUpdateAssetStats = (data: WsUpdateAssetStatsMessage) => {
     filterUnavailableAssetIds(data.asset_stats),
     bufferedAssetsStats,
   )
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedAccountTrades = (data: WsSubscribedAccountTradesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...reduceAccountVolume(
-          prevState.accounts[accountIndex],
-          data.weekly_volume,
-          data.monthly_volume,
-          data.total_volume,
-          data.daily_volume,
-        ),
-        trades: {},
-      },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: {
+      ...reduceAccountVolume(accounts[accountIndex], data.total_volume),
+      trades: {},
+      boTrades: {},
     },
   }))
 }
 
 const handleUpdateAccountTrades = (data: WsUpdateAccountTradesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
-
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: reduceAccountTrades(
-        prevState.accounts[accountIndex],
-        filterUnavailableMarkets(data.trades),
-      ),
-    },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: reduceAccountTrades(accounts[accountIndex], data.trades),
   }))
 }
 
@@ -875,136 +1068,144 @@ const handleSubscribedAccountPositions = (
 ) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
   const perpsOrderBookMetas = selectPerpsOrderBookMetas(useLighterStore.getState())
+  const positions = mapValues(filterUnavailableMarkets(data.positions), (position) => {
+    if (position.margin_set_flag || position.margin_mode !== AccountPositionMarginModeEnum.Cross) {
+      return position
+    }
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...prevState.accounts[accountIndex],
-        positions: mapValues(filterUnavailableMarkets(data.positions), (position) => {
-          if (position.margin_set_flag || position.margin_mode !== MarginMode.CROSS) {
-            return position
-          }
+    const marketFlags = perpsOrderBookMetas[position.market_id]?.market_flags ?? null
 
-          const marketFlags = perpsOrderBookMetas[position.market_id]?.market_flags ?? null
+    if (marketFlags === null) {
+      return position
+    }
 
-          if (marketFlags === null) {
-            return position
-          }
+    return { ...position, margin_mode: getDefaultMarketMarginModeFromFlags(marketFlags) }
+  })
 
-          return { ...position, margin_mode: getDefaultMarketMarginModeFromFlags(marketFlags) }
-        }),
-        shares: data.shares,
-      },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: {
+      ...accounts[accountIndex],
+      positions,
+      boPositions: data.bo_positions,
+      shares: data.shares,
     },
   }))
 }
 
 const handleUpdateAccountPositions = (data: Omit<WsUpdateAccountPositionsMessage, 'type'>) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
+  const positions = filterUnavailableMarkets(data.positions)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: reduceAccountShares(
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: reduceAccountShares(
+      reduceAccountBOPositions(
         reduceAccountPositions(
-          prevState.accounts[accountIndex],
-          filterUnavailableMarkets(data.positions),
+          accounts[accountIndex],
+          positions,
           data.last_funding_round,
           data.last_funding_discount,
         ),
-        data.shares,
+        data.bo_positions,
       ),
-    },
+      data.shares,
+    ),
   }))
 }
 
 const handleSubscribedAccountOrders = (data: WsSubscribedAccountOrdersMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
-
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: reduceAccountOrders(
-        { ...prevState.accounts[accountIndex], inactiveOrders: {}, activeOrders: {} },
-        filterUnavailableMarkets(data.orders),
-      ),
-    },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: reduceAccountOrders(
+      {
+        ...accounts[accountIndex],
+        inactiveOrders: {},
+        activeOrders: {},
+        boInactiveOrders: {},
+        boActiveOrders: {},
+      },
+      data.orders,
+    ),
   }))
 }
 
 const handleUpdateAccountOrders = (data: WsUpdateAccountOrdersMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
-
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: reduceAccountOrders(
-        prevState.accounts[accountIndex],
-        filterUnavailableMarkets(data.orders),
-      ),
-    },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: reduceAccountOrders(accounts[accountIndex], data.orders),
   }))
 }
 
 const handleSubscribedAssetBalances = (data: WsSubscribedAssetBalancesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
+  const assetBalances = filterUnavailableAssetIds(data.assets)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...prevState.accounts[accountIndex],
-        assetBalances: filterUnavailableAssetIds(data.assets),
-      },
-    },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: { ...accounts[accountIndex], assetBalances },
+  }))
+}
+
+export const applyPublicAssetBalances = (accountIndex: number, assets: AccountAsset[]) => {
+  const assetBalances = filterUnavailableAssetIds(
+    Object.fromEntries(
+      assets.map((asset) => {
+        const assetBalance: WsAssetBalance = {
+          asset_id: asset.asset_id,
+          margin_mode: asset.margin_mode,
+          balance: Number(asset.balance),
+          margin_balance: Number(asset.margin_balance),
+          locked_balance: Number(asset.locked_balance),
+          available_balance: 0,
+          available_margin_balance: 0,
+        }
+        transformAssetBalance(assetBalance)
+        return [asset.asset_id, assetBalance]
+      }),
+    ),
+  )
+
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: { ...accounts[accountIndex], assetBalances },
   }))
 }
 
 const handleUpdateAssetBalances = (data: WsUpdateAssetBalancesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
+  const assetBalances = filterUnavailableAssetIds(data.assets)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...prevState.accounts[accountIndex],
-        assetBalances: {
-          ...prevState.accounts[accountIndex]?.assetBalances,
-          ...filterUnavailableAssetIds(data.assets),
-        },
-      },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: {
+      ...accounts[accountIndex],
+      assetBalances: { ...accounts[accountIndex]?.assetBalances, ...assetBalances },
     },
   }))
 }
 
 const handleSubscribedSpotAvgEntryPrices = (data: WsSubscribedSpotAvgEntryPricesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
+  const spotAvgEntryPrices = filterUnavailableAssetIds(data.avg_entry_prices)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...prevState.accounts[accountIndex],
-        spotAvgEntryPrices: filterUnavailableAssetIds(data.avg_entry_prices),
-      },
-    },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: { ...accounts[accountIndex], spotAvgEntryPrices },
   }))
 }
 
 const handleUpdateSpotAvgEntryPrices = (data: WsUpdateSpotAvgEntryPricesMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
+  const spotAvgEntryPrices = filterUnavailableAssetIds(data.avg_entry_prices)
 
-  useLighterStore.setState((prevState) => ({
-    accounts: {
-      ...prevState.accounts,
-      [accountIndex]: {
-        ...prevState.accounts[accountIndex],
-        spotAvgEntryPrices: {
-          ...prevState.accounts[accountIndex]?.spotAvgEntryPrices,
-          ...filterUnavailableAssetIds(data.avg_entry_prices),
-        },
-      },
+  queueAccountUpdate(accountIndex, (accounts) => ({
+    ...accounts,
+    [accountIndex]: {
+      ...accounts[accountIndex],
+      spotAvgEntryPrices: { ...accounts[accountIndex]?.spotAvgEntryPrices, ...spotAvgEntryPrices },
     },
   }))
 }
@@ -1029,6 +1230,7 @@ const handleSubscribedLivePoints = (data: WsSubscribedLivePointsMessage) => {
 const handleUpdateLivePoints = (data: WsUpdateLivePointsMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
   bufferedLivePoints[accountIndex] = data.total_live_points
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedRfqs = (data: WsSubscribedRfqsMessage) => {
@@ -1131,6 +1333,7 @@ const replayedAgentExchanges = ({ history, pending }: WsSubscribedAgentMessage) 
     error: null,
     id: newAgentExchangeId(),
     question: qa.question,
+    responseMs: qa.response_ms ?? null,
     status: 'answered',
   })
 
@@ -1141,6 +1344,7 @@ const replayedAgentExchanges = ({ history, pending }: WsSubscribedAgentMessage) 
     error: null,
     id: newAgentExchangeId(),
     question: qa.question,
+    responseMs: null,
     status: 'thinking',
   })
 
@@ -1166,6 +1370,7 @@ const handleUpdateAgent = (data: WsUpdateAgentMessage) =>
   patchInFlightAgentExchanges(getAccountIndexFromChannel(data.channel), {
     answer: data.answer,
     answeredAt: Date.now(),
+    responseMs: data.response_ms ?? null,
     status: 'answered',
   })
 
@@ -1183,7 +1388,7 @@ const handleWsError = ({ error }: WsErrorMessage) => {
 }
 
 const handleUpdateAccountTx = (data: WsUpdateExecutedTransactionMessage) =>
-  data.txs.forEach((tx) => accountTxCallbacks.forEach((cb) => cb(tx)))
+  (data.txs ?? []).forEach((tx) => accountTxCallbacks.forEach((cb) => cb(tx)))
 
 const handleSubscribedPoolInfo = (data: WsSubscribedPoolInfoMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
@@ -1205,6 +1410,7 @@ const handleSubscribedPoolInfo = (data: WsSubscribedPoolInfoMessage) => {
 const handleUpdatePoolInfo = (data: WsUpdatePoolInfoMessage) => {
   const accountIndex = getAccountIndexFromChannel(data.channel)
   bufferedPoolInfo[accountIndex] = data.pool_info
+  ensureThrottledDataPush()
 }
 
 const handleSubscribedHeight = (data: WsSubscribedHeightMessage) => {
@@ -1214,6 +1420,7 @@ const handleSubscribedHeight = (data: WsSubscribedHeightMessage) => {
 
 const handleUpdatedHeight = (data: WsUpdateHeightMessage) => {
   bufferedBlockHeight = data.height
+  ensureThrottledDataPush()
 }
 
 const handleSubscribeNotification = (
@@ -1240,6 +1447,11 @@ export const clearBufferedCandlesticksForKey = (key: string) => {
   }
 }
 
+export const markOrderBookStale = () => {
+  bufferedOrderbook = { asks: [], bids: [] }
+  useLighterStore.setState({ orderBookStale: true })
+}
+
 export const handleChangeDesiredMarket = (marketId: number) => {
   currentMarketId = marketId
   bufferedTrades = []
@@ -1250,5 +1462,6 @@ export const handleChangeDesiredMarket = (marketId: number) => {
     trades: null,
     liquidationTrades: null,
     orderBook: null,
+    orderBookStale: false,
   })
 }

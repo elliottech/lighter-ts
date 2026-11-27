@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query'
-import type { DetailedAccounts, ResponseError } from 'zklighter-perps'
-import { SubAccountType, type DetailedAccount } from '../store/types'
+import { AccountAccountTypeEnum, type DetailedAccounts, type ResponseError } from 'zklighter-perps'
+import { type DetailedAccount } from '../store/types'
 import { convertDetailedAccount } from '../utils/restApiConversion'
 import { useUserAddress } from './useUserAddress'
 import { apis } from '../lib/apis'
@@ -35,20 +35,20 @@ export const computeAccountsQueryData = (detailedAccounts: DetailedAccounts): Ac
   for (const account of accounts) {
     const accountWithFlags: DetailedAccountWithFlags = {
       ...account,
-      isMainAccount: account.account_type === SubAccountType.Main,
-      isSubAccount: account.account_type !== SubAccountType.Main,
+      isMainAccount: account.account_type === AccountAccountTypeEnum.Master,
+      isSubAccount: account.account_type !== AccountAccountTypeEnum.Master,
       isPublicPoolAccount:
-        account.account_type === SubAccountType.Public ||
-        account.account_type === SubAccountType.LighterPublic,
+        account.account_type === AccountAccountTypeEnum.PublicPool ||
+        account.account_type === AccountAccountTypeEnum.InsuranceFund,
     }
     accountsByIndex[accountWithFlags.index] = accountWithFlags
-    if (accountWithFlags.account_type === SubAccountType.Main) {
+    if (accountWithFlags.account_type === AccountAccountTypeEnum.Master) {
       mainAccount = accountWithFlags
-    } else if (accountWithFlags.account_type === SubAccountType.Sub) {
+    } else if (accountWithFlags.account_type === AccountAccountTypeEnum.Sub) {
       subAccounts.push(accountWithFlags)
     } else if (
-      account.account_type === SubAccountType.Public ||
-      account.account_type === SubAccountType.LighterPublic
+      account.account_type === AccountAccountTypeEnum.PublicPool ||
+      account.account_type === AccountAccountTypeEnum.InsuranceFund
     ) {
       publicPoolAccounts.push(accountWithFlags)
     }

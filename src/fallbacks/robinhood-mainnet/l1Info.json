@@ -1,0 +1,25 @@
+{
+  "code": 200,
+  "l1_providers": [
+    {
+      "chainId": 4663,
+      "networkId": 4663,
+      "latestBlockNumber": 0
+    }
+  ],
+  "l1_providers_health": true,
+  "validator_info": [],
+  "contract_addresses": [
+    {
+      "name": "ZkLighterContract",
+      "address": "0x94bAB9693Ba2f6358507eFfcbd372b0660AFfF9d"
+    },
+    {
+      "name": "USDCContract",
+      "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+    }
+  ],
+  "latest_l1_generic_block": 0,
+  "latest_l1_governance_block": 0,
+  "latest_l1_desert_block": 0
+}

@@ -41,8 +41,8 @@ fixed-point scale for fractions.
 
 - **`compute*` for math, `get*` for lookup and validation.**
 - **Validation returns keys, not copy.** `getInvalidSLTPTriggerPriceKey` and
-  friends return typed i18n keys (`InvalidSLTPTriggerPriceKey`,
-  `SLTriggerPriceLiqWarningKey`) so the host owns wording and translation. Keep
+  friends return typed i18n keys (`InvalidSLTriggerPriceKey`,
+  `InvalidTPTriggerPriceKey`) so the host owns wording and translation. Keep
   new validators to the same contract — no user-facing strings in this directory.
 - **Nothing here throws for bad input.** Functions return `0`, `null`, or a
   validation key. Callers are rendering as the user types, mid-keystroke, and an

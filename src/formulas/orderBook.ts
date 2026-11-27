@@ -1,7 +1,10 @@
+import { MAX_MARKET_ORDER_SLIPPAGE } from '../constants/shared'
+import type { BOTimeInForce } from '../store/bo/createBOSlice'
+import type { TimeInForce } from '../store/place-order/utils'
 import type { OrderbookItem } from '../store/types'
 import type { OrderBookDetail } from '../types/compatibility'
 import { OrderType } from '../types/order'
-import { floorNumber } from '../utils/precision'
+import { floorNumber, roundNumber } from '../utils/precision'
 
 export const computeWorstExecutionPrice = (
   maxSlippage: number,
@@ -9,8 +12,28 @@ export const computeWorstExecutionPrice = (
   bestPrice: number,
 ) => bestPrice * (1 + (maxSlippage / 100) * (isShort ? -1 : 1))
 
-export const computeAvailableLiquidity = (orders: OrderbookItem[]) =>
-  orders.reduce((total, order) => total + order.size, 0)
+// Bound perps TWAP buys at double the mark and sells at half; spot uses index slippage.
+export const computeTWAPOrderPrice = (
+  isShort: boolean,
+  isSpot: boolean,
+  markPrice: number | null,
+  indexPrice: number | null,
+) => {
+  if (!isSpot) {
+    return markPrice ? computeWorstExecutionPrice(isShort ? 50 : 100, isShort, markPrice) : 0
+  }
+
+  return indexPrice ? computeWorstExecutionPrice(MAX_MARKET_ORDER_SLIPPAGE, isShort, indexPrice) : 0
+}
+
+export const computeAvailableLiquidity = (
+  orders: OrderbookItem[],
+  market: Pick<OrderBookDetail, 'size_decimals'>,
+) =>
+  roundNumber(
+    orders.reduce((total, order) => total + order.size, 0),
+    market.size_decimals,
+  )
 
 export const computeAvailableQuoteLiquidity = (orders: OrderbookItem[]) =>
   orders.reduce((total, order) => total + order.size * order.price, 0)
@@ -24,6 +47,12 @@ export const computeNotEnoughLiquidity = (
   availableLiquidity: number,
   baseAmount: number,
 ) => !orderBookLoading && orderType === OrderType.Market && availableLiquidity < baseAmount
+
+export const computeNotEnoughMargin = (
+  sliderMax: number,
+  baseAmount: number,
+  market: Pick<OrderBookDetail, 'size_decimals'>,
+) => floorNumber(baseAmount - sliderMax, market.size_decimals) > 0
 
 export const computeMarketOrderPrice = (
   maxSlippage: number,
@@ -61,6 +90,30 @@ export const computeTooMuchSlippage = (
   maxSlippage: number,
 ) => orderType === OrderType.Market && slippage > maxSlippage
 
+export const computeVeryHighSlippage = (orderType: OrderType, slippage: number) =>
+  orderType === OrderType.Market && slippage > 5
+
+export const computeShouldShowLimitPriceWarning = (
+  orderType: OrderType,
+  timeInForce: TimeInForce | BOTimeInForce,
+  isShort: boolean,
+  limitPrice: number,
+  baseAmount: number,
+  { bids, asks }: { bids: OrderbookItem[]; asks: OrderbookItem[] },
+) => {
+  if (
+    orderType !== OrderType.Limit ||
+    timeInForce === 'ioc' ||
+    !baseAmount ||
+    bids.length === 0 ||
+    asks.length === 0
+  ) {
+    return false
+  }
+
+  return isShort ? limitPrice <= bids[0]!.price : limitPrice >= asks[0]!.price
+}
+
 const ALMOST_ZERO = 10 ** -12
 const isZero = (value: number) => Math.abs(value) < ALMOST_ZERO
 
@@ -87,25 +140,30 @@ type MatchQuoteResult = {
 }
 
 // runs the order book and tries to match a token amount to orders
-// and derive the average price (estimated price) and how much that means in quote
+// and derive the average price (estimated price) and how much that means in quote.
+// Past the visible book the remainder is matched at the last price; estPrice only covers the visible fill
 export const matchBaseAmount = (
   market: Pick<OrderBookDetail, 'price_decimals'>,
   baseAmount: number,
   orders: OrderbookItem[],
 ): MatchBaseResult => {
   let baseAmountLeft = baseAmount
-  let matchedBaseAmount = 0
   let matchedQuoteAmount = 0
+  let filledBaseAmount = 0
+  let filledQuoteAmount = 0
 
-  for (const order of orders) {
+  for (const [index, order] of orders.entries()) {
     if (isZero(baseAmountLeft)) {
       break
     }
 
-    const matchedSize = Math.min(baseAmountLeft, order.size)
+    const isLastOrder = index === orders.length - 1
+    const matchedSize = isLastOrder ? baseAmountLeft : Math.min(baseAmountLeft, order.size)
+    const filledSize = Math.min(matchedSize, order.size)
 
-    matchedBaseAmount = matchedBaseAmount + matchedSize
     matchedQuoteAmount = matchedQuoteAmount + matchedSize * order.price
+    filledBaseAmount = filledBaseAmount + filledSize
+    filledQuoteAmount = filledQuoteAmount + filledSize * order.price
     baseAmountLeft = baseAmountLeft - matchedSize
   }
 
@@ -114,13 +172,14 @@ export const matchBaseAmount = (
     : 0
 
   return {
-    estPrice: matchedBaseAmount ? matchedQuoteAmount / matchedBaseAmount : 0,
+    estPrice: filledBaseAmount ? filledQuoteAmount / filledBaseAmount : 0,
     quoteAmount,
   }
 }
 
 // runs the order book and tries to match a USD amount to orders
-// and derive the average price (estimated price) and how much that means in token amount
+// and derive the average price (estimated price) and how much that means in token amount.
+// Past the visible book the remainder is matched at the last price; estPrice only covers the visible fill
 export const matchQuoteAmount = (
   market: Pick<OrderBookDetail, 'size_decimals'>,
   quoteAmount: number,
@@ -128,16 +187,20 @@ export const matchQuoteAmount = (
 ): MatchQuoteResult => {
   let quoteAmountLeft = quoteAmount
   let matchedBaseAmount = 0
-  let matchedQuoteAmount = 0
+  let filledBaseAmount = 0
+  let filledQuoteAmount = 0
 
-  for (const order of orders) {
-    const matchedSize = Math.min(
-      floorNumber(quoteAmountLeft / order.price, market.size_decimals),
-      order.size,
-    )
+  for (const [index, order] of orders.entries()) {
+    const isLastOrder = index === orders.length - 1
+    const maxSizeForThisPrice = floorNumber(quoteAmountLeft / order.price, market.size_decimals)
+    const matchedSize = isLastOrder
+      ? maxSizeForThisPrice
+      : Math.min(maxSizeForThisPrice, order.size)
+    const filledSize = Math.min(matchedSize, order.size)
 
     matchedBaseAmount = matchedBaseAmount + matchedSize
-    matchedQuoteAmount = matchedQuoteAmount + matchedSize * order.price
+    filledBaseAmount = filledBaseAmount + filledSize
+    filledQuoteAmount = filledQuoteAmount + filledSize * order.price
     quoteAmountLeft = quoteAmountLeft - matchedSize * order.price
 
     if (matchedSize < order.size) {
@@ -145,10 +208,10 @@ export const matchQuoteAmount = (
     }
   }
 
-  const baseAmount = matchedBaseAmount ? floorNumber(matchedBaseAmount, market.size_decimals) : 0
+  const baseAmount = matchedBaseAmount ? roundNumber(matchedBaseAmount, market.size_decimals) : 0
 
   return {
-    estPrice: matchedBaseAmount ? matchedQuoteAmount / matchedBaseAmount : 0,
+    estPrice: filledBaseAmount ? filledQuoteAmount / filledBaseAmount : 0,
     baseAmount,
   }
 }

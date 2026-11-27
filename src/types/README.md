@@ -47,9 +47,7 @@ Related re-shaping of *account* types (string→number parsing) lives in
 | `tokenlist.ts` | `Token` (an API token with `backend_symbol` guaranteed), `TokenCategory` and its display order, market type and category filters. |
 | `user.ts` | Protocol transaction enums with their **on-the-wire numeric values**: `TxTypes` (8, 9, 12, 14, …), `TxOrderTypes`, `TxTimeInForceTypes`, `TxGroupingTypes` (OTO / OCO / OTOCO). The numbers are protocol constants — do not renumber them. |
 | `user-tiers.ts` | `UserTier` and the expanded `ExtendedUserTier` (premium 1–7). |
-| `MarginMode.ts` | `CROSS` (0) / `ISOLATED` (1). |
-| `accountTradingMode.ts` | `CLASSIC` (0) / `UNIFIED` (1). |
-| `Platform.ts` | Web / mobile app / mobile browser, sent with signed transactions. |
+| `Platform.ts` | Web / mobile app / mobile browser / strategies server, sent with signed transactions. |
 | `OrderHistoryRow.ts` | A flattened order joined with its market, for table rendering. |
 
 ## The const-object enum pattern
@@ -57,8 +55,8 @@ Related re-shaping of *account* types (string→number parsing) lives in
 Most enums are written as a const object plus a lookup type:
 
 ```ts
-export const MarginMode = { CROSS: 0, ISOLATED: 1 } as const
-export type MarginMode = (typeof MarginMode)[keyof typeof MarginMode]
+export const OrderType = { Market: 'market', Limit: 'limit' } as const
+export type OrderType = (typeof OrderType)[keyof typeof OrderType]
 ```
 
 This gives a value and a type under one name, erases completely at build time,
@@ -67,4 +65,8 @@ not. Prefer it for anything new.
 
 Real `enum`s remain where the members are protocol wire values that must be
 written out explicitly (`TxTypes`, `TxOrderTypes`, `TxGroupingTypes` in
-`user.ts`), plus `Platform` and `SubAccountType`.
+`user.ts`), plus `Platform`.
+
+Enums that mirror an API field (`AccountAccountTypeEnum`, `AccountPositionMarginModeEnum`,
+`AccountAccountTradingModeEnum`, `PublicPoolInfoStatusEnum`, `RFQEntryDirectionEnum`, …) are not
+redefined here — import them from `zklighter-perps`, where they are generated from `server.api`.

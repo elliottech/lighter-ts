@@ -1,0 +1,78 @@
+{
+  "user_tiers": [
+    {
+      "name": "standard",
+      "level": 1,
+      "maker_fee_ticks": 0,
+      "taker_fee_ticks": 0,
+      "required_lit_stakes": 0,
+      "required_volume": 0
+    },
+    {
+      "name": "plus",
+      "level": 2,
+      "maker_fee_ticks": 150,
+      "taker_fee_ticks": 150,
+      "required_lit_stakes": 0,
+      "required_volume": 0
+    },
+    {
+      "name": "premium",
+      "level": 3,
+      "maker_fee_ticks": 120,
+      "taker_fee_ticks": 350,
+      "required_lit_stakes": 0,
+      "required_volume": 0
+    },
+    {
+      "name": "premium_1",
+      "level": 3,
+      "maker_fee_ticks": 117,
+      "taker_fee_ticks": 341,
+      "required_lit_stakes": 0,
+      "required_volume": 1000000
+    },
+    {
+      "name": "premium_2",
+      "level": 3,
+      "maker_fee_ticks": 114,
+      "taker_fee_ticks": 333,
+      "required_lit_stakes": 0,
+      "required_volume": 10000000
+    },
+    {
+      "name": "premium_3",
+      "level": 3,
+      "maker_fee_ticks": 108,
+      "taker_fee_ticks": 315,
+      "required_lit_stakes": 0,
+      "required_volume": 20000000
+    },
+    {
+      "name": "premium_4",
+      "level": 3,
+      "maker_fee_ticks": 102,
+      "taker_fee_ticks": 298,
+      "required_lit_stakes": 0,
+      "required_volume": 50000000
+    },
+    {
+      "name": "premium_5",
+      "level": 3,
+      "maker_fee_ticks": 96,
+      "taker_fee_ticks": 280,
+      "required_lit_stakes": 0,
+      "required_volume": 200000000
+    },
+    {
+      "name": "premium_6",
+      "level": 3,
+      "maker_fee_ticks": 84,
+      "taker_fee_ticks": 245,
+      "required_lit_stakes": 0,
+      "required_volume": 500000000
+    }
+  ],
+  "bo_tiers": [],
+  "staking_tiers": []
+}

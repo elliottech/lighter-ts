@@ -1,17 +1,31 @@
-import { computeEstPositionClosePnl, isLimitOrderUnsafe } from '../../formulas/common'
-import { computeSlippage } from '../../formulas/orderBook'
+import { AccountPositionSignEnum } from 'zklighter-perps'
+
+import {
+  computeEstPositionClosePnl,
+  computeIsFairPriceMissing,
+  computeIsPriceFarFromFairPrice,
+  isLimitOrderUnsafe,
+  isTriggerLimitPriceUnsafe,
+} from '../../formulas/common'
+import { computeSlippage, computeVeryHighSlippage } from '../../formulas/orderBook'
 import { isTestingEnvironment } from '../../testing/isTestingEnvironment'
 import { OrderType } from '../../types/order'
 import type { AccountsSlice } from '../accounts/createAccountsSlice'
 import { selectCurrentMarketPosition } from '../accounts/selectors'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
 import {
+  selectCurrentMarketId,
   selectCurrentMarketIndexPrice,
   selectCurrentMarketMarkPrice,
   selectCurrentPerpsMarket,
+  selectOrderBook,
+  selectPerpsMarketsStats,
+  selectSpotMarketsStats,
   selectSpreadPercentage,
 } from '../orderbook/selectors'
 import {
+  selectDisplayedForm,
+  selectMarketId,
   selectOrderType,
   type OptionalDirection,
   type OptionalLimitPrice,
@@ -36,8 +50,10 @@ import {
   selectLimitPrice,
   selectOrderBookOrders,
   selectPositionAwareIsShort,
+  selectTriggerPrice,
 } from './common'
 import { selectScaleLimitOrders } from './scale'
+import { selectStopLossInfo, selectTakeProfitInfo } from './sltp'
 
 export const selectSlippage = createSelector(
   [selectEstPrice, selectBestPrice],
@@ -74,7 +90,7 @@ export const selectVeryHighSlippage = createSelector(
       return false
     }
 
-    return orderType === OrderType.Market && slippage > 5
+    return computeVeryHighSlippage(orderType, slippage)
   }),
 )
 
@@ -145,23 +161,176 @@ const selectShowScalePriceProtectionWarning = createSelector(
   ),
 )
 
-export const selectShowPriceProtectionWarning = createSelector(
-  [selectShowLimitPriceProtectionWarning, selectShowScalePriceProtectionWarning],
+export const selectShowTriggerLimitPriceProtectionWarning = createSelector(
+  [
+    selectOrderType,
+    selectPositionAwareIsShort,
+    selectLimitPrice,
+    selectTriggerPrice,
+    selectStopLossInfo,
+    selectTakeProfitInfo,
+    selectDisplayedForm,
+  ],
   createTracking(
-    'selectShowPriceProtectionWarning',
-    (showLimitPriceProtectionWarning, showScalePriceProtectionWarning) => {
+    'selectShowTriggerLimitPriceProtectionWarning',
+    (orderType, isShort, limitPrice, triggerPrice, stopLossInfo, takeProfitInfo, displayedForm) => {
       if (isTestingEnvironment()) {
         return false
       }
 
-      return showLimitPriceProtectionWarning || showScalePriceProtectionWarning
+      switch (orderType) {
+        case OrderType.Conditional:
+          return isTriggerLimitPriceUnsafe(isShort, limitPrice, triggerPrice)
+        case OrderType.Market:
+        case OrderType.Limit:
+          if (displayedForm.type === 'closePosition') {
+            return false
+          }
+          return [stopLossInfo, takeProfitInfo].some((info) =>
+            isTriggerLimitPriceUnsafe(!isShort, info.limitPrice, info.triggerPrice),
+          )
+        default:
+          return false
+      }
     },
   ),
 )
 
-export const selectShowOppositeSidePositionWarning = createSelector(
+export const selectShowMarketPriceProtectionWarning = createSelector(
   [
     selectOrderType,
+    selectPositionAwareIsShort,
+    selectEstPrice,
+    selectCurrentMarketMarkPrice,
+    selectCurrentMarketIndexPrice,
+    selectBestPrice,
+  ],
+  createTracking(
+    'selectShowMarketPriceProtectionWarning',
+    (orderType, isShort, estPrice, markPrice, indexPrice, bestPrice) => {
+      return (
+        orderType === OrderType.Market &&
+        computeIsPriceFarFromFairPrice(isShort, estPrice, markPrice ?? indexPrice, bestPrice)
+      )
+    },
+  ),
+)
+
+export const selectIsMarketOrderFairPriceMissing = createSelector(
+  [selectOrderType, selectCurrentMarketMarkPrice, selectCurrentMarketIndexPrice, selectBestPrice],
+  createTracking(
+    'selectIsMarketOrderFairPriceMissing',
+    (orderType, markPrice, indexPrice, bestPrice) => {
+      if (isTestingEnvironment()) {
+        return false
+      }
+
+      return (
+        orderType === OrderType.Market &&
+        computeIsFairPriceMissing(markPrice ?? indexPrice, bestPrice)
+      )
+    },
+  ),
+)
+
+type ExplicitMarketSide = { marketId: number; isShort: boolean }
+
+const selectParamIsShort = <T>(_state: T, params: ExplicitMarketSide) => params.isShort
+const selectParamPrice = <T>(_state: T, params: { price: number }) => params.price
+
+const selectMarketFairPrice = createSelector(
+  [selectPerpsMarketsStats, selectSpotMarketsStats, selectMarketId],
+  createTracking(
+    'selectMarketFairPrice',
+    (perpsMarketsStats, spotMarketsStats, marketId) =>
+      perpsMarketsStats[marketId]?.mark_price ?? spotMarketsStats[marketId]?.index_price ?? null,
+  ),
+)
+
+const selectMarketBestPrice = createSelector(
+  [
+    selectOrderBook,
+    selectCurrentMarketId,
+    selectPerpsMarketsStats,
+    selectSpotMarketsStats,
+    selectMarketId,
+    selectParamIsShort,
+  ],
+  createTracking(
+    'selectMarketBestPrice',
+    (orderBook, currentMarketId, perpsMarketsStats, spotMarketsStats, marketId, isShort) => {
+      if (marketId === currentMarketId) {
+        return (isShort ? orderBook.bids : orderBook.asks)[0]?.price ?? 0
+      }
+      const stats = perpsMarketsStats[marketId] ?? spotMarketsStats[marketId]
+      return (isShort ? stats?.best_bid_price : stats?.best_ask_price) ?? 0
+    },
+  ),
+)
+
+export const selectIsPriceFarFromFairPrice = createSelector(
+  [selectParamIsShort, selectParamPrice, selectMarketFairPrice, selectMarketBestPrice],
+  createTracking('selectIsPriceFarFromFairPrice', computeIsPriceFarFromFairPrice),
+)
+
+export const selectIsFairPriceMissing = createSelector(
+  [selectMarketFairPrice, selectMarketBestPrice],
+  createTracking('selectIsFairPriceMissing', (fairPrice, bestPrice) => {
+    if (isTestingEnvironment()) {
+      return false
+    }
+
+    return computeIsFairPriceMissing(fairPrice, bestPrice)
+  }),
+)
+
+export const selectShowEntryPriceProtectionWarning = createSelector(
+  [
+    selectShowLimitPriceProtectionWarning,
+    selectShowScalePriceProtectionWarning,
+    selectShowMarketPriceProtectionWarning,
+  ],
+  createTracking(
+    'selectShowEntryPriceProtectionWarning',
+    (
+      showLimitPriceProtectionWarning,
+      showScalePriceProtectionWarning,
+      showMarketPriceProtectionWarning,
+    ) =>
+      showLimitPriceProtectionWarning ||
+      showScalePriceProtectionWarning ||
+      showMarketPriceProtectionWarning,
+  ),
+)
+
+export const selectShowPriceProtectionWarning = createSelector(
+  [
+    selectShowEntryPriceProtectionWarning,
+    selectShowTriggerLimitPriceProtectionWarning,
+    selectIsMarketOrderFairPriceMissing,
+  ],
+  createTracking(
+    'selectShowPriceProtectionWarning',
+    (
+      showEntryPriceProtectionWarning,
+      showTriggerLimitPriceProtectionWarning,
+      isMarketOrderFairPriceMissing,
+    ) => {
+      if (isTestingEnvironment()) {
+        return false
+      }
+
+      return (
+        showEntryPriceProtectionWarning ||
+        showTriggerLimitPriceProtectionWarning ||
+        isMarketOrderFairPriceMissing
+      )
+    },
+  ),
+)
+
+export const selectFlipsOppositeSidePosition = createSelector(
+  [
     selectIsShort,
     selectReduceOnly,
     selectCurrentMarketPosition,
@@ -169,13 +338,9 @@ export const selectShowOppositeSidePositionWarning = createSelector(
     selectBaseAmount,
   ],
   createTracking(
-    'selectShowOppositeSidePositionWarning',
-    (orderType, isShort, reduceOnly, position, sliderValue, baseAmount) => {
+    'selectFlipsOppositeSidePosition',
+    (isShort, reduceOnly, position, sliderValue, baseAmount) => {
       if (isTestingEnvironment()) {
-        return false
-      }
-
-      if (orderType !== OrderType.Market && orderType !== OrderType.Twap) {
         return false
       }
 
@@ -188,7 +353,7 @@ export const selectShowOppositeSidePositionWarning = createSelector(
         return false
       }
 
-      const isOppositeSide = (position?.sign === 1) === isShort
+      const isOppositeSide = (position?.sign === AccountPositionSignEnum.Long) === isShort
       if (!isOppositeSide) {
         return false
       }
@@ -199,5 +364,14 @@ export const selectShowOppositeSidePositionWarning = createSelector(
 
       return baseAmount > positionSize
     },
+  ),
+)
+
+export const selectShowOppositeSidePositionWarning = createSelector(
+  [selectOrderType, selectFlipsOppositeSidePosition],
+  createTracking(
+    'selectShowOppositeSidePositionWarning',
+    (orderType, flipsOppositeSidePosition) =>
+      (orderType === OrderType.Market || orderType === OrderType.Twap) && flipsOppositeSidePosition,
   ),
 )

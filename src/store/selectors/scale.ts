@@ -1,5 +1,6 @@
-import { computeLimitOrders, computeLimitOrdersInBase } from '../../formulas/scale'
+import { computeLimitOrdersInBase } from '../../formulas/scale'
 import type { UserTier } from '../../types/user-tiers'
+import { convertBaseToFloat } from '../../utils/common'
 import type { AccountsSlice } from '../accounts/createAccountsSlice'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
 import { selectCurrentMarket } from '../orderbook/selectors'
@@ -23,19 +24,9 @@ import { createTracking } from '../utils/tracking'
 import {
   selectBaseAmount,
   selectPositionAwareIsShort,
-  selectScalePriceDistribution,
+  selectScaleOrderPrices,
   selectScaleSizeDistribution,
 } from './common'
-
-export const selectScaleLimitOrders = createSelector(
-  [
-    selectBaseAmount,
-    selectScalePriceDistribution,
-    selectScaleSizeDistribution,
-    selectPositionAwareIsShort,
-  ],
-  createTracking('selectScaleLimitOrders', computeLimitOrders),
-)
 
 export const selectScaleLimitOrdersInBase: (
   state: AccountsSlice &
@@ -52,8 +43,24 @@ export const selectScaleLimitOrdersInBase: (
     OptionalAccountIndex &
     OptionalAssetId,
 ) => { baseAmount: number; price: number }[] = createSelector(
-  [selectScaleLimitOrders, selectBaseAmount, selectCurrentMarket],
+  [
+    selectBaseAmount,
+    selectScaleOrderPrices,
+    selectScaleSizeDistribution,
+    selectPositionAwareIsShort,
+    selectCurrentMarket,
+  ],
   createTracking('selectScaleLimitOrdersInBase', computeLimitOrdersInBase),
+)
+
+export const selectScaleLimitOrders = createSelector(
+  [selectScaleLimitOrdersInBase, selectCurrentMarket],
+  createTracking('selectScaleLimitOrders', (orders, currentMarket) =>
+    orders.map(({ baseAmount, price }) => ({
+      price: convertBaseToFloat(price, currentMarket.price_decimals),
+      size: convertBaseToFloat(baseAmount, currentMarket.size_decimals),
+    })),
+  ),
 )
 
 const STANDARD_SCALE_MAX_ORDER_COUNT = 20

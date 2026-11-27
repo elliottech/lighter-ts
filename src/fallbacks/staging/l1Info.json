@@ -1,0 +1,37 @@
+{
+  "code": 200,
+  "l1_providers": [
+    {
+      "chainId": 123456,
+      "networkId": 123456,
+      "latestBlockNumber": 0
+    }
+  ],
+  "l1_providers_health": true,
+  "validator_info": [],
+  "contract_addresses": [
+    {
+      "name": "ZkLighterContract",
+      "address": "0xc3775D8431dB45a1A6ed566B4eb98d98449fBC33"
+    },
+    {
+      "name": "USDCContract",
+      "address": "0x3c705dB336C81c7FEFC5746e283aB2c0781A4B7b"
+    },
+    {
+      "name": "GovernanceContract",
+      "address": "0x7672450B86A7C58ECcDD947374d823A12039E18e"
+    },
+    {
+      "name": "L1CoreMessagingContract",
+      "address": "0x90352F820342f8BE0012848bCB8aBd37877d7ec2"
+    },
+    {
+      "name": "FaucetContract",
+      "address": "0x549bc7EE4B85A2Df5F74799f213483CE599F1999"
+    }
+  ],
+  "latest_l1_generic_block": 0,
+  "latest_l1_governance_block": 0,
+  "latest_l1_desert_block": 0
+}

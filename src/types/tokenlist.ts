@@ -6,6 +6,8 @@ export type Token = ApiToken & { backend_symbol: string }
 
 export type TokenCategory =
   | 'ALL'
+  | 'PERPS'
+  | 'SPOT'
   | 'NEW'
   | 'UPCOMING'
   | 'MAJOR'
@@ -27,6 +29,8 @@ export type TokenCategory =
 
 export const TOKEN_CATEGORY_ORDER: TokenCategory[] = [
   'ALL',
+  'PERPS',
+  'SPOT',
   'NEW',
   'UPCOMING',
   'MAJOR',

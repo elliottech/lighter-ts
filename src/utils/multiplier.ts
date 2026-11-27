@@ -40,6 +40,12 @@ export const realSizeToDisplay = (
   )
 }
 
+// An oracle price in display units, unrounded; formatOraclePrice rounds it half at the display decimals.
+export const realOraclePriceToDisplay = (
+  realPrice: number | string,
+  params: { multiplier: string },
+) => Number(realPrice) / Number(params?.multiplier ?? TESTING_DEFAULT_MULTIPLIER)
+
 export const realPriceToDisplay = (
   realPrice: number | string,
   params: { multiplier: string; display_price_decimals: number },

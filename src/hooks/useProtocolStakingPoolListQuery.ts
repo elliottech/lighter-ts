@@ -7,6 +7,8 @@ import { MAX_ACCOUNT_INDEX_LIMIT } from '../constants/shared'
 import { apis } from '../lib/apis'
 import { convertPublicPoolMetadata } from '../utils/restApiConversion'
 
+const STAKING_POOLS_REFRESH_INTERVAL_MS = 60_000
+
 export const useProtocolStakingPoolListQuery = () => {
   const accounExistence = useLighterStore(selectAccountExistence)
   const accountIndex = useLighterStore(selectUserAccountIndex)
@@ -29,7 +31,8 @@ export const useProtocolStakingPoolListQuery = () => {
         public_pools: public_pools.map(convertPublicPoolMetadata),
       })),
     enabled: accounExistence !== 'Deciding',
-    refetchInterval: 60000,
+    staleTime: STAKING_POOLS_REFRESH_INTERVAL_MS,
+    refetchInterval: STAKING_POOLS_REFRESH_INTERVAL_MS,
     refetchOnMount: true,
     retry: 1,
   })

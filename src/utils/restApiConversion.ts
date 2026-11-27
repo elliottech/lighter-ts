@@ -1,6 +1,8 @@
 import type {
   AccountAsset as CodegenedAccountAsset,
+  AccountBinaryOptionsPosition,
   AccountPosition,
+  BinaryOptionMarketStats,
   DetailedAccount as CodegenedDetailedAccount,
   Liquidation as CodegenedLiquidation,
   Order as CodegenedOrder,
@@ -12,6 +14,7 @@ import type {
 } from 'zklighter-perps'
 import type {
   AccountAsset,
+  BOPosition,
   DetailedAccount,
   Liquidation,
   Order,
@@ -22,8 +25,10 @@ import type {
   Rfq,
   Trade,
 } from '../store/types'
+import type { WsBOMarketStats } from '../lighter-ws/types/WsMessage'
 import { marginPercentageToFraction } from '../formulas/marginPercentageToFraction'
-import { MarginMode } from '../types/MarginMode'
+import { toNullableNumber } from './common'
+import { roundNumber } from './precision'
 
 const convertAccountAsset = (asset: CodegenedAccountAsset): AccountAsset => ({
   ...asset,
@@ -53,6 +58,13 @@ export const convertPublicPoolMetadata = (
     : undefined,
 })
 
+const convertAccountBOPosition = (position: AccountBinaryOptionsPosition): BOPosition => ({
+  ...position,
+  entry_quote: Number(position.entry_quote),
+  avg_entry_price: Number(position.avg_entry_price),
+  size: Number(position.size),
+})
+
 export const convertDetailedAccount = (account: CodegenedDetailedAccount): DetailedAccount => ({
   ...account,
   available_balance: Number(account.available_balance),
@@ -68,6 +80,7 @@ export const convertDetailedAccount = (account: CodegenedDetailedAccount): Detai
     ...pendingUnlock,
     amount: Number(pendingUnlock.amount),
   })),
+  bo_positions: account.bo_positions?.map(convertAccountBOPosition),
   // the API omits pool_info for non-pool accounts even though codegen marks it required
   pool_info: account.pool_info
     ? {
@@ -87,6 +100,12 @@ export const convertTrade = (trade: CodegenedTrade): Trade => ({
   usd_amount: Number(trade.usd_amount),
   price: Number(trade.price),
   size: Number(trade.size),
+  taker_position_size_before: toNullableNumber(trade.taker_position_size_before),
+  taker_entry_quote_before: toNullableNumber(trade.taker_entry_quote_before),
+  maker_position_size_before: toNullableNumber(trade.maker_position_size_before),
+  maker_entry_quote_before: toNullableNumber(trade.maker_entry_quote_before),
+  ask_account_pnl: toNullableNumber(trade.ask_account_pnl),
+  bid_account_pnl: toNullableNumber(trade.bid_account_pnl),
 })
 
 export const convertOrder = (order: CodegenedOrder): Order => ({
@@ -121,7 +140,6 @@ const convertAccountPosition = (accountPosition: AccountPosition): Position => (
   avg_entry_price: Number(accountPosition.avg_entry_price),
   total_funding_paid_out: Number(accountPosition.total_funding_paid_out),
   total_discount: Number(accountPosition.total_discount),
-  margin_mode: accountPosition.margin_mode === 0 ? MarginMode.CROSS : MarginMode.ISOLATED,
   allocated_margin: Number(accountPosition.allocated_margin),
 })
 
@@ -131,4 +149,17 @@ export const convertLiquidation = (liquidation: CodegenedLiquidation): Liquidati
     ...liquidation.info,
     positions: liquidation.info.positions.map(convertAccountPosition),
   },
+})
+
+export const convertBOMarketStats = (stats: BinaryOptionMarketStats): WsBOMarketStats => ({
+  ...stats,
+  daily_quote_token_volume: roundNumber(stats.daily_quote_token_volume, 2),
+  lifetime_quote_token_volume: roundNumber(stats.lifetime_quote_token_volume, 2),
+  lifetime_base_token_volume: roundNumber(stats.lifetime_base_token_volume, 2),
+  daily_price_change: roundNumber(stats.daily_price_change / 100, 4),
+  last_trade_price: Number(stats.last_trade_price),
+  mid_price: Number(stats.mid_price),
+  best_bid_price: Number(stats.best_bid_price),
+  best_ask_price: Number(stats.best_ask_price),
+  open_interest: Number(stats.open_interest),
 })

@@ -1,9 +1,17 @@
 import { mapValues, pickBy } from 'lodash-es'
-
 import {
+  AccountAccountTradingModeEnum,
+  AccountPositionMarginModeEnum,
+  AccountPositionSignEnum,
+} from 'zklighter-perps'
+
+import { computeBOLockedBalance } from '../../formulas/boOrderMargin'
+import {
+  computeBOEquity,
   computeCrossCollateral,
   computeCrossLeverage,
   computeDisplayTotalUnrealizedPnl,
+  getPositionPnlPrice,
   computeInitialMarginReq,
   computeLiqCollateral,
   computeMarginUsage,
@@ -21,7 +29,7 @@ import {
   computeAvailableLiquidity,
   computeMarketOrderPrice,
   computeNotEnoughLiquidity,
-  computeWorstExecutionPrice,
+  computeTWAPOrderPrice,
   type MatchInfo,
 } from '../../formulas/orderBook'
 import {
@@ -36,10 +44,11 @@ import {
   computePositionOrderMarginOffset,
   computeSpotAvailableToTradeLimit,
   computeSpotAvailableToTradeMarket,
+  computeSpotBuyAutoSupplyCredit,
 } from '../../formulas/orderMargin'
 import {
   computeAverageLimitPrice,
-  computePriceDistribution,
+  computeScaleOrderPrices,
   computeSizeDistribution,
 } from '../../formulas/scale'
 import {
@@ -47,47 +56,58 @@ import {
   computeSpotSliderMaxBaseAmount,
 } from '../../formulas/updatedStats'
 import type { WsPerpsMarketStats } from '../../lighter-ws/types/WsMessage'
-import { AccountTradingMode } from '../../types/accountTradingMode'
-import { MarginMode } from '../../types/MarginMode'
 import { OrderType } from '../../types/order'
-import { isMarketIsolatedOnly } from '../../utils/marketFlags'
+import { convertBaseToFloat } from '../../utils/common'
+import { getDefaultMarketMarginModeFromFlags, isMarketIsolatedOnly } from '../../utils/marketFlags'
 import { displayPriceToReal } from '../../utils/multiplier'
 import type { AccountsSlice } from '../accounts/createAccountsSlice'
 import {
   selectAccountTradingMode,
   selectActiveOrders,
+  selectActiveOrdersLoading,
   selectAssetBalance,
   selectAssetBalances,
+  selectBOActiveOrders,
+  selectBOPositions,
   selectCrossPositions,
   selectCurrentMarketPosition,
   selectMarginMode,
   selectPositions,
+  selectPositionsLoading,
   selectRawAssetBalances,
+  selectRawBOPositions,
   selectRawPosition,
   selectRawPositions,
   selectTotalAllocatedMargin,
 } from '../accounts/selectors'
 import type { OrderBookSlice } from '../orderbook/createOrderBookSlice'
+import { selectPerpsOrderBookMetas, selectSpotOrderBookMetas } from '../orderbook/metadataSelectors'
 import {
   computeDisplayOrderBook,
   selectAssetIndexPrice,
   selectAssetIndexPrices,
   selectAssetMeta,
   selectAssetMetas,
+  selectAssetsStats,
+  selectBOMarketsStats,
   selectCurrentMarket,
   selectCurrentMarketId,
   selectCurrentMarketIndexPrice,
   selectCurrentMarketMarkPrice,
   selectCurrentMarketOrderBookMultiplier,
   selectCurrentPerpsMarket,
+  selectFeeTierConfigs,
   selectIsCurrentMarketSpot,
+  selectMarkPrice,
   selectMidPrice,
   selectOrderBook,
   selectOrderBookLoading,
   selectOrderBookMeta,
+  selectOrderBookMetasLoaded,
+  selectParamCount,
+  selectPerpsMarketStats,
   selectPerpsMarketsStats,
   selectPerpsOrderBookMeta,
-  selectPerpsOrderBookMetas,
   USDC_ASSET_ID,
 } from '../orderbook/selectors'
 import {
@@ -106,8 +126,6 @@ import {
 } from '../params/selectors'
 import type { PlaceOrderSlice } from '../place-order/createPlaceOrderSlice'
 import {
-  selectIsConditional,
-  selectIsLimit,
   selectIsShort,
   selectReduceOnly,
   selectScaleInputValue,
@@ -118,6 +136,7 @@ import type { PreferencesSlice } from '../preferences/createPreferencesSlice'
 import { selectMaxSlippage } from '../preferences/selectors'
 import type { TokensSlice } from '../tokens/createTokensSlice'
 import { selectRwaCoins, selectTokens } from '../tokens/selectors'
+import type { PerpsOrderBookDetail } from '../../types/compatibility'
 import type { Position } from '../types'
 import type { UserSlice } from '../user/createUserSlice'
 import { selectFeeTicks, selectUserTierName } from '../user/selectors'
@@ -145,7 +164,10 @@ const extractRelevantClosePrices = (
     if (position?.position) {
       const stats = perpsMarketsStats[marketId]
       if (stats) {
-        const price = position.sign === 1 ? stats.best_bid_price : stats.best_ask_price
+        const price =
+          position.sign === AccountPositionSignEnum.Long
+            ? stats.best_bid_price
+            : stats.best_ask_price
         result[marketId] = price || stats.mid_price
       }
     }
@@ -188,6 +210,21 @@ export const selectActiveOrdersMarkPrices = createDeepEqualSelector(
   ),
 )
 
+export const selectActiveOrdersSpotIndexPrices = createDeepEqualSelector(
+  [selectActiveOrders, selectSpotOrderBookMetas, selectAssetsStats],
+  createTracking(
+    'selectActiveOrdersSpotIndexPrices',
+    (activeOrders, spotOrderBookMetas, assetsStats): Record<string, number> =>
+      pickBy(
+        mapValues(
+          pickBy(spotOrderBookMetas, ({ market_id }) => !!activeOrders[market_id]?.length),
+          ({ base_asset_id }) => assetsStats[base_asset_id]?.index_price,
+        ),
+        (indexPrice) => indexPrice !== undefined,
+      ),
+  ),
+)
+
 const selectOrderMarginMarkPrices = createDeepEqualSelector(
   [selectActiveOrders, selectPositions, selectCurrentMarketId, selectPerpsMarketsStats],
   createTracking(
@@ -218,7 +255,7 @@ export const selectPositionAwareIsShort: (
   [selectIsShort, selectCurrentMarketPosition, selectDisplayedForm],
   createTracking('selectPositionAwareIsShort', (isShort, position, displayedForm) => {
     if (displayedForm.type === 'closePosition' && !!position) {
-      return position.sign === 1
+      return position.sign === AccountPositionSignEnum.Long
     }
 
     return isShort
@@ -237,15 +274,6 @@ export const selectTriggerPrice = createSelector(
   createTracking('selectTriggerPrice', displayPriceToReal),
 )
 
-export const selectHasRestingLimit = createSelector(
-  [selectIsLimit, selectIsConditional, selectLimitPrice, selectTimeInForce],
-  createTracking(
-    'selectHasRestingLimit',
-    (isLimit, isConditional, limitPrice, timeInForce) =>
-      (isLimit && timeInForce !== 'ioc') || (isConditional && !!limitPrice),
-  ),
-)
-
 export const selectScale = createSelector(
   [selectScaleInputValue, selectCurrentMarket, selectPositionAwareIsShort],
   createTracking('selectScale', (scale, currentMarket, isShort) => ({
@@ -256,10 +284,15 @@ export const selectScale = createSelector(
   })),
 )
 
-export const selectScalePriceDistribution = createSelector(
-  [selectScale],
-  createTracking('selectScalePriceDistribution', (scale) =>
-    computePriceDistribution(scale.startPrice, scale.endPrice, scale.orderCount),
+export const selectScaleOrderPrices = createSelector(
+  [selectScale, selectCurrentMarket],
+  createTracking('selectScaleOrderPrices', (scale, currentMarket) =>
+    computeScaleOrderPrices(
+      scale.startPrice,
+      scale.endPrice,
+      scale.orderCount,
+      currentMarket.price_decimals,
+    ),
   ),
 )
 
@@ -271,8 +304,10 @@ export const selectScaleSizeDistribution = createSelector(
 )
 
 export const selectScaleAverageLimitPrice = createSelector(
-  [selectScalePriceDistribution, selectScaleSizeDistribution],
-  createTracking('selectScaleAverageLimitPrice', computeAverageLimitPrice),
+  [selectScaleOrderPrices, selectScaleSizeDistribution, selectCurrentMarket],
+  createTracking('selectScaleAverageLimitPrice', (prices, sizes, currentMarket) =>
+    convertBaseToFloat(computeAverageLimitPrice(prices, sizes), currentMarket.price_decimals),
+  ),
 )
 
 export const selectOrderBookOrders = createSelector(
@@ -286,7 +321,7 @@ export const selectBestPrice = createSelector(
 )
 
 export const selectAvailableLiquidity = createSelector(
-  [selectOrderBookOrders],
+  [selectOrderBookOrders, selectCurrentMarket],
   createTracking('selectAvailableLiquidity', computeAvailableLiquidity),
 )
 
@@ -296,10 +331,13 @@ export const selectMarketOrderPrice = createSelector(
 )
 
 export const selectTWAPOrderPrice = createSelector(
-  [selectIsShort, selectBestPrice],
-  createTracking('selectTWAPOrderPrice', (isShort, bestPrice) =>
-    computeWorstExecutionPrice(100, isShort, bestPrice),
-  ),
+  [
+    selectIsShort,
+    selectIsCurrentMarketSpot,
+    selectCurrentMarketMarkPrice,
+    selectCurrentMarketIndexPrice,
+  ],
+  createTracking('selectTWAPOrderPrice', computeTWAPOrderPrice),
 )
 
 export const selectCurrentMarketInitialMarginFraction = createSelector(
@@ -326,9 +364,84 @@ export const selectMarketsInitialMarginFraction = createSelector(
   }),
 )
 
+export interface MaxLeverageMarketUpdate {
+  market: PerpsOrderBookDetail
+  from: number
+  to: number
+  marginMode: AccountPositionMarginModeEnum
+  initialMarginFraction: number
+}
+
+export const selectMaxLeverageMarketUpdates = createDeepEqualSelector(
+  [
+    selectRawPositions,
+    selectPositionsLoading,
+    selectActiveOrders,
+    selectActiveOrdersLoading,
+    selectPerpsOrderBookMetas,
+    selectOrderBookMetasLoaded,
+  ],
+  createTracking(
+    'selectMaxLeverageMarketUpdates',
+    (
+      rawPositions,
+      positionsLoading,
+      activeOrders,
+      activeOrdersLoading,
+      markets,
+      orderBookMetasLoaded,
+    ): MaxLeverageMarketUpdate[] => {
+      if (positionsLoading || activeOrdersLoading || !orderBookMetasLoaded) return []
+
+      const marketIds = new Set([
+        ...Object.entries(rawPositions ?? {}).flatMap(([marketId, position]) =>
+          position.position !== 0 ? [marketId] : [],
+        ),
+        ...Object.entries(activeOrders).flatMap(([marketId, orders]) =>
+          orders.length > 0 ? [marketId] : [],
+        ),
+      ])
+
+      return Array.from(marketIds).flatMap((marketIdValue) => {
+        const marketId = Number(marketIdValue)
+        const market = markets[marketId]
+        if (!market) return []
+
+        const position = rawPositions?.[marketId]
+        const marginMode =
+          position?.margin_mode ?? getDefaultMarketMarginModeFromFlags(market.market_flags)
+        const initialMarginFraction =
+          position?.initial_margin_fraction ?? market.default_initial_margin_fraction
+
+        if (
+          marginMode !== AccountPositionMarginModeEnum.Cross ||
+          initialMarginFraction <= market.min_initial_margin_fraction
+        ) {
+          return []
+        }
+
+        return [
+          {
+            market,
+            from: marginFractionToLeverage(initialMarginFraction),
+            to: marginFractionToLeverage(market.min_initial_margin_fraction),
+            marginMode,
+            initialMarginFraction: market.min_initial_margin_fraction,
+          },
+        ]
+      })
+    },
+  ),
+)
+
 export const selectSpotEquity = createSelector(
   [selectAssetIndexPrices, selectRawAssetBalances],
   createTracking('selectSpotEquity', computeSpotEquity),
+)
+
+export const selectBOEquity = createSelector(
+  [selectBOMarketsStats, selectRawBOPositions],
+  createTracking('selectBOEquity', computeBOEquity),
 )
 
 const selectCrossUnrealizedPnl = createSelector(
@@ -376,6 +489,17 @@ export const selectDisplayTotalUnrealizedPnl = createSelector(
   createTracking('selectDisplayTotalUnrealizedPnl', computeDisplayTotalUnrealizedPnl),
 )
 
+export const selectPositionPnlPrice = createSelector(
+  [selectMarkPrice, selectPerpsMarketStats, selectPerpsOrderBookMeta, selectRwaCoins],
+  createTracking('selectPositionPnlPrice', (markPrice, marketStats, market, rwaCoins) =>
+    getPositionPnlPrice({
+      markPrice: markPrice ?? 0,
+      midPrice: marketStats?.mid_price,
+      isRwaMarket: !!market && rwaCoins.has(market.backend_symbol),
+    }),
+  ),
+)
+
 export const selectPerpsEquity = createSelector(
   [selectTotalAllocatedMargin, selectTotalUnrealizedPnl, selectRawAssetBalances],
   createTracking('selectPerpsEquity', computePerpsEquity),
@@ -406,9 +530,6 @@ export const selectInitialMarginFraction = createSelector(
       position?.initial_margin_fraction ?? perpsMarket?.default_initial_margin_fraction ?? 0,
   ),
 )
-
-const selectParamCount = <ParamsT extends { count: number }>(_state: unknown, params: ParamsT) =>
-  params.count
 
 const selectParamPercentageRange = <ParamsT extends { percentageRange?: number }>(
   _state: unknown,
@@ -462,17 +583,21 @@ export const selectCrossMaintenanceMarginUsage = createSelector(
   createTracking('selectCrossMaintenanceMarginUsage', computeMarginUsage),
 )
 
+export const selectBOLockedBalance = createSelector(
+  [selectBOPositions, selectBOActiveOrders],
+  createTracking('selectBOLockedBalance', computeBOLockedBalance),
+)
+
 const selectAvailableOrderMargin = createSelector(
   [
     selectPerpsOrderBookMetas,
     selectOrderMarginMarkPrices,
     selectRawPositions,
     selectActiveOrders,
-    selectAssetMetas,
     selectRawAssetBalances,
-    selectAssetIndexPrices,
     selectCrossTotalAccountValue,
     selectCrossInitialMarginReq,
+    selectBOLockedBalance,
   ],
   createTracking('selectAvailableOrderMargin', computeAvailableOrderMargin),
 )
@@ -565,6 +690,7 @@ const selectSpotAvailableToTradeLimit = createSelector(
     selectAssetIndexPrice,
     selectIsShort,
     selectAvailableOrderMargin,
+    selectBOLockedBalance,
   ],
   createTracking('selectSpotAvailableToTradeLimit', computeSpotAvailableToTradeLimit),
 )
@@ -589,7 +715,13 @@ export const selectClassicAvailablePerpsUSDCToTransfer = createSelector(
 )
 
 export const selectAvailableBalancesToTransfer = createSelector(
-  [selectAssetMetas, selectRawAssetBalances, selectAssetIndexPrices, selectAvailableOrderMargin],
+  [
+    selectAssetMetas,
+    selectRawAssetBalances,
+    selectAssetIndexPrices,
+    selectAvailableOrderMargin,
+    selectBOLockedBalance,
+  ],
   createTracking('selectAvailableBalancesToTransfer', computeAvailableBalancesToTransfer),
 )
 
@@ -659,7 +791,6 @@ const selectPerpsSliderMax = createSelector(
     selectUserTierName,
     selectCurrentMarket,
     selectReduceOnly,
-    selectAvailableLiquidity,
     selectOrderBookOrders,
     selectCurrentMarketMarkPrice,
     selectCurrentMarketInitialMarginFraction,
@@ -670,25 +801,39 @@ const selectPerpsSliderMax = createSelector(
     selectAvailableMarginForLimitOrdersInBaseAmount,
     selectFeeTicks,
     selectTimeInForce,
+    selectFeeTierConfigs,
+    selectPriceForOrderMarginConversion,
   ],
   createTracking('selectPerpsSliderMax', computePerpsSliderMaxBaseAmount),
 )
 
-const selectCanPlaceLimitOrderFullAmount = createSelector(
+export const selectCanPlaceLimitOrderFullAmount = createSelector(
   [selectAccountTradingMode, selectCrossInitialMarginReq],
   createTracking('selectCanPlaceLimitOrderFullAmount', (accountTradingMode, imr) => {
     if (accountTradingMode === null || imr === null) {
       return false
     }
 
-    return accountTradingMode === AccountTradingMode.CLASSIC || imr === 0
+    return accountTradingMode === AccountAccountTradingModeEnum.Simple || imr === 0
   }),
+)
+
+const selectSpotBuyAutoSupplyCredit = createSelector(
+  [selectCurrentMarket, selectAssetMetas, selectAssetBalances, selectAssetsStats],
+  createTracking('selectSpotBuyAutoSupplyCredit', computeSpotBuyAutoSupplyCredit),
+)
+
+const selectCurrentMarketQuoteAssetBalance = createSelector(
+  [selectCurrentMarket, selectAssetBalances],
+  createTracking(
+    'selectCurrentMarketQuoteAssetBalance',
+    (currentMarket, assetBalances) => assetBalances[currentMarket.quote_asset_id],
+  ),
 )
 
 const selectSpotSliderMax = createSelector(
   [
     selectCurrentMarket,
-    selectAvailableLiquidity,
     selectOrderBookOrders,
     selectOrderType,
     selectIsShort,
@@ -696,6 +841,8 @@ const selectSpotSliderMax = createSelector(
     selectSpotAvailableToTradeLimit,
     selectPriceForOrderMarginConversion,
     selectCanPlaceLimitOrderFullAmount,
+    selectSpotBuyAutoSupplyCredit,
+    selectCurrentMarketQuoteAssetBalance,
   ],
   createTracking('selectSpotSliderMax', computeSpotSliderMaxBaseAmount),
 )
@@ -856,7 +1003,7 @@ export const selectIsMarginModeChangeRequired = createSelector(
   createTracking(
     'selectIsMarginModeChangeRequired',
     (isIsolatedOnly, marginMode, position) =>
-      isIsolatedOnly && marginMode === MarginMode.CROSS && !position?.position,
+      isIsolatedOnly && marginMode === AccountPositionMarginModeEnum.Cross && !position?.position,
   ),
 )
 
@@ -874,7 +1021,7 @@ export const selectCanModifyAccountTradingMode = createSelector(
         return false
       }
 
-      if (accountTradingMode === AccountTradingMode.CLASSIC) {
+      if (accountTradingMode === AccountAccountTradingModeEnum.Simple) {
         return true
       }
 

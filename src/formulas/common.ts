@@ -1,12 +1,22 @@
-import { MARGIN_FRACTION_TICK } from '../constants/shared'
+import {
+  AccountBinaryOptionsPositionSignEnum,
+  AccountPositionMarginModeEnum,
+  AccountPositionSignEnum,
+} from 'zklighter-perps'
+import { FREE_ORDER_BATCH_SIZE, MARGIN_FRACTION_TICK, OrderDirections } from '../constants/shared'
 import { errorReporting } from '../lib/errorReporting'
 import { LLP_ASSET_ID, USDC_ASSET_ID } from '../store/orderbook/selectors'
-import type { AssetBalance, OrderbookItem, Position } from '../store/types'
+import type { selectPerpsOrderBookMetas } from '../store/orderbook/metadataSelectors'
+import type {
+  selectPositionsClosePrices,
+  selectPositionsMarkPrices,
+} from '../store/selectors/common'
+import type { AssetBalance, BOPosition, OrderbookItem, Position } from '../store/types'
 import type { AssetMeta, PerpsOrderBookDetail } from '../types/compatibility'
-import { MarginMode } from '../types/MarginMode'
 import { floorNumber } from '../utils/precision'
+import { type BOPositionPriceStats, getBOPositionPrice } from '../utils/bo'
 
-import { matchBaseAmount } from './orderBook'
+import { computeWorstExecutionPrice, matchBaseAmount } from './orderBook'
 
 export const marginFractionToPercentage = (marginFraction: number) =>
   marginFraction / MARGIN_FRACTION_TICK
@@ -14,10 +24,42 @@ export const marginFractionToPercentage = (marginFraction: number) =>
 export const marginFractionToLeverage = (marginFraction: number) =>
   MARGIN_FRACTION_TICK / marginFraction
 
-export const leverageToMarginFraction = (leverage: number) => MARGIN_FRACTION_TICK / leverage
+export const leverageToMarginFraction = (leverage: number) =>
+  Math.round(MARGIN_FRACTION_TICK / leverage)
 
 export const computeMarginReq = (size: number, markPrice: number, marginFraction: number) =>
   size * markPrice * marginFractionToPercentage(marginFraction)
+
+export const isLeverageChangeValid = (
+  crossTotalAccountValue: number,
+  crossInitialMarginRequirement: number,
+  position: Position | undefined,
+  markPrice: number,
+  newInitialMarginFraction: number,
+) => {
+  if (!Number.isFinite(newInitialMarginFraction)) {
+    return false
+  }
+
+  if (!position?.position || newInitialMarginFraction <= position.initial_margin_fraction) {
+    return true
+  }
+
+  const availableMargin =
+    position.margin_mode === AccountPositionMarginModeEnum.Cross
+      ? crossTotalAccountValue - crossInitialMarginRequirement
+      : position.allocated_margin +
+        computePositionPnl(position, markPrice) -
+        computeMarginReq(position.position, markPrice, position.initial_margin_fraction)
+
+  const initialMarginRequirementDelta = computeMarginReq(
+    position.position,
+    markPrice,
+    newInitialMarginFraction - position.initial_margin_fraction,
+  )
+
+  return initialMarginRequirementDelta <= availableMargin
+}
 
 export const computePositionPnl = (
   position: Pick<Position, 'position' | 'avg_entry_price' | 'sign'>,
@@ -213,8 +255,8 @@ export const computePositionLiquidationPrice = (
   }
 
   if (
-    (position.sign === 1 && liquidationPrice >= markPrice) ||
-    (position.sign === -1 && liquidationPrice <= markPrice)
+    (position.sign === AccountPositionSignEnum.Long && liquidationPrice >= markPrice) ||
+    (position.sign === AccountPositionSignEnum.Short && liquidationPrice <= markPrice)
   ) {
     return markPrice
   }
@@ -254,7 +296,7 @@ export const computePositionsLiqPrices = (
         }
 
         const liqPrice =
-          position.margin_mode === MarginMode.CROSS
+          position.margin_mode === AccountPositionMarginModeEnum.Cross
             ? computePositionLiquidationPrice(
                 position,
                 markPrice,
@@ -292,6 +334,10 @@ export const computeTotalMaintenanceMarginReq = (
   }
 
   return Object.entries(positions).reduce((acc, [marketId, position]) => {
+    if (position.position === 0) {
+      return acc
+    }
+
     const meta = perpsOrderBookMetas[marketId]
 
     if (!meta) {
@@ -353,6 +399,40 @@ export const computeSpotEquity = (
   }, 0)
 }
 
+// The balances computeSpotEquity prices; spot equity is unknown until each has an index price
+export const hasSpotIndexPrices = (
+  indexPrices: Record<string, number>,
+  assetBalances: Pick<AssetBalance, 'asset_id' | 'balance' | 'margin_balance'>[],
+) =>
+  assetBalances.every(
+    ({ asset_id, balance, margin_balance }) =>
+      asset_id === LLP_ASSET_ID ||
+      balance + (asset_id === USDC_ASSET_ID ? 0 : margin_balance) === 0 ||
+      indexPrices[asset_id] !== undefined,
+  )
+
+export const computeBOEquity = (
+  marketsStats: Record<string, BOPositionPriceStats>,
+  positions?: Record<string, Pick<BOPosition, 'sign' | 'size' | 'avg_entry_price'>>,
+) => {
+  if (!positions) {
+    return null
+  }
+
+  return Object.entries(positions).reduce((equity, [marketId, position]) => {
+    const direction =
+      position.sign === AccountBinaryOptionsPositionSignEnum.Yes
+        ? OrderDirections.Long
+        : OrderDirections.Short
+    const positionPrice = getBOPositionPrice(
+      direction,
+      position.avg_entry_price,
+      marketsStats[marketId],
+    )
+    return positionPrice === null ? equity : equity + position.size * positionPrice
+  }, 0)
+}
+
 export const computePerpsEquity = (
   allocatedMargin: number | null,
   unrealizedPnl: number | null,
@@ -387,6 +467,16 @@ export const computeTotalUnrealizedPnl = (
   }, 0)
 }
 
+export const getPositionPnlPrice = <TMarkPrice extends number | undefined>({
+  markPrice,
+  midPrice,
+  isRwaMarket,
+}: {
+  markPrice: TMarkPrice
+  midPrice: number | undefined
+  isRwaMarket: boolean
+}) => (isRwaMarket && midPrice ? midPrice : markPrice)
+
 export const computeDisplayTotalUnrealizedPnl = (
   markPrices: Record<string, number>,
   midPrices: Record<string, number>,
@@ -401,7 +491,11 @@ export const computeDisplayTotalUnrealizedPnl = (
   return Object.entries(positions).reduce((pnl, [marketId, position]) => {
     const market = perpsOrderBookMetas[marketId]
     const isRwaMarket = market ? rwaCoins.has(market.backend_symbol) : false
-    const referencePrice = isRwaMarket ? midPrices[marketId] : markPrices[marketId]
+    const referencePrice = getPositionPnlPrice({
+      markPrice: markPrices[marketId],
+      midPrice: midPrices[marketId],
+      isRwaMarket,
+    })
 
     if (referencePrice === undefined) {
       return pnl
@@ -440,4 +534,93 @@ export const isLimitOrderUnsafe = (
 ) =>
   isShort
     ? 0.95 * Math.max(fairPrice, bestPrice) > price
-    : 1.05 * Math.min(fairPrice, bestPrice) < price
+    : 1.05 * Math.min(fairPrice, bestPrice || Infinity) < price
+
+export const computeIsPriceFarFromFairPrice = (
+  isShort: boolean,
+  price: number,
+  fairPrice: number | null,
+  bestPrice: number,
+) =>
+  fairPrice !== null && bestPrice !== 0 && isLimitOrderUnsafe(isShort, price, fairPrice, bestPrice)
+
+export const computeIsFairPriceMissing = (fairPrice: number | null, bestPrice: number) =>
+  bestPrice > 0 && fairPrice === null
+
+export const computeCloseAllPositionPrice = (
+  isLong: boolean,
+  maxSlippage: number,
+  closePrice: number | undefined,
+  markPrice: number | null,
+) => {
+  const referencePrice = closePrice || markPrice
+  if (!referencePrice) {
+    return null
+  }
+
+  const fairPrice = markPrice || null
+  const price = computeWorstExecutionPrice(maxSlippage, isLong, referencePrice)
+
+  return {
+    price,
+    isFarFromMarkPrice: computeIsPriceFarFromFairPrice(isLong, price, fairPrice, referencePrice),
+    isMarkPriceMissing: computeIsFairPriceMissing(fairPrice, referencePrice),
+  }
+}
+
+export const computeCloseAllPositionsPriceWarnings = ({
+  positions,
+  isStandardTier,
+  maxSlippage,
+  closePrices,
+  markPrices,
+  markets,
+}: {
+  positions: Record<string, Position>
+  isStandardTier: boolean
+  maxSlippage: number
+  closePrices: ReturnType<typeof selectPositionsClosePrices>
+  markPrices: ReturnType<typeof selectPositionsMarkPrices>
+  markets: ReturnType<typeof selectPerpsOrderBookMetas>
+}): { farFromMarkSymbols: string; markPriceMissingSymbols: string } => {
+  const sortedPositions = Object.values(positions)
+  const sentPositions = isStandardTier
+    ? sortedPositions.slice(0, FREE_ORDER_BATCH_SIZE)
+    : sortedPositions
+  const farFromMark: string[] = []
+  const markMissing: string[] = []
+  for (const position of sentPositions) {
+    const symbol = markets[position.market_id]?.symbol
+    const closePrice = computeCloseAllPositionPrice(
+      position.sign === AccountPositionSignEnum.Long,
+      maxSlippage,
+      closePrices[position.market_id],
+      markPrices[position.market_id] ?? null,
+    )
+    if (!symbol || !closePrice) continue
+    if (closePrice.isFarFromMarkPrice) farFromMark.push(symbol)
+    if (closePrice.isMarkPriceMissing) markMissing.push(symbol)
+  }
+  return {
+    farFromMarkSymbols: farFromMark.join(', '),
+    markPriceMissingSymbols: markMissing.join(', '),
+  }
+}
+
+const FLOAT_PRICE_TOLERANCE = 1e-9
+
+export const isTriggerLimitPriceUnsafe = (
+  isShort: boolean,
+  limitPrice: number,
+  triggerPrice: number,
+) => {
+  if (!limitPrice || !triggerPrice) {
+    return false
+  }
+
+  const bound = computeWorstExecutionPrice(5, isShort, triggerPrice)
+
+  return isShort
+    ? limitPrice < bound * (1 - FLOAT_PRICE_TOLERANCE)
+    : limitPrice > bound * (1 + FLOAT_PRICE_TOLERANCE)
+}

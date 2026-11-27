@@ -3,14 +3,20 @@ export const TOKEN_IMAGE_BASE_URL = 'https://assets.lighter.xyz/fe/token'
 export const getTokenUrl = (logo: string, extension: string = 'svg') =>
   `${TOKEN_IMAGE_BASE_URL}/${logo}.${extension}`
 
+// No fallback: every raster logo needs its 64px WebP copy uploaded under /64.
+export const getSmallTokenUrl = (logo: string, extension: string = 'svg') =>
+  extension === 'svg' ? getTokenUrl(logo, extension) : `${TOKEN_IMAGE_BASE_URL}/64/${logo}.webp`
+
 export const CHAIN_ICON_MAP = {
   eth: `${TOKEN_IMAGE_BASE_URL}/eth.svg`,
   arb: `${TOKEN_IMAGE_BASE_URL}/arb.svg`,
   sol: `${TOKEN_IMAGE_BASE_URL}/sol.svg`,
   base: `${TOKEN_IMAGE_BASE_URL}/base.svg`,
+  arcChain: `${TOKEN_IMAGE_BASE_URL}/arcChain.svg`,
   avalanche: `${TOKEN_IMAGE_BASE_URL}/avax.svg`,
   hl: `${TOKEN_IMAGE_BASE_URL}/hl.svg`,
   btc: `${TOKEN_IMAGE_BASE_URL}/btc.svg`,
+  lightning: `${TOKEN_IMAGE_BASE_URL}/lightning.svg`,
   monad: `${TOKEN_IMAGE_BASE_URL}/mon.png`,
   tron: `${TOKEN_IMAGE_BASE_URL}/trx.svg`,
   polygon: `${TOKEN_IMAGE_BASE_URL}/matic.svg`,
@@ -19,6 +25,7 @@ export const CHAIN_ICON_MAP = {
   abstract: `${TOKEN_IMAGE_BASE_URL}/abstract.svg`,
   ethereal: `${TOKEN_IMAGE_BASE_URL}/ethereal.svg`,
   hood: `${TOKEN_IMAGE_BASE_URL}/hood.png`,
+  rhLighter: `${TOKEN_IMAGE_BASE_URL}/robinhood-lighter.png`,
   ink: `${TOKEN_IMAGE_BASE_URL}/ink.svg`,
 } as const
 

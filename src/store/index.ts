@@ -1,4 +1,5 @@
 export * from './agent'
+export * from './bo'
 export * from './accounts'
 export * from './orderbook'
 export * from './params'

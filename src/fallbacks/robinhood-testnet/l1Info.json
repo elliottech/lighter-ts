@@ -1,0 +1,29 @@
+{
+  "code": 200,
+  "l1_providers": [
+    {
+      "chainId": 123456,
+      "networkId": 123456,
+      "latestBlockNumber": 0
+    }
+  ],
+  "l1_providers_health": true,
+  "validator_info": [],
+  "contract_addresses": [
+    {
+      "name": "ZkLighterContract",
+      "address": "0xc897A94bE0f1594E05Da9Ea68C35C9D5d3aCb693"
+    },
+    {
+      "name": "USDCContract",
+      "address": "0xFA9f8a9bF4Ae4619e2B8e4683CdFC58EFeA46294"
+    },
+    {
+      "name": "FaucetContract",
+      "address": "0x186be31aB8bfE2e25B7E52437B7BF46d9D3a53d9"
+    }
+  ],
+  "latest_l1_generic_block": 0,
+  "latest_l1_governance_block": 0,
+  "latest_l1_desert_block": 0
+}

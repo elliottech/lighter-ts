@@ -1,11 +1,20 @@
 import { pickBy } from 'lodash-es'
-import { OrderTriggerStatusEnum, OrderTypeEnum, RfqRespondStatusEnum } from 'zklighter-perps'
+import {
+  OrderTypeEnum,
+  RFQEntryDirectionEnum,
+  RfqRespondStatusEnum,
+  AccountPositionMarginModeEnum,
+} from 'zklighter-perps'
 
 import { DRAFT_RFQ_ID } from '../../constants/order'
 import { computeTotalAllocatedMargin } from '../../formulas/common'
-import { MarginMode } from '../../types/MarginMode'
 import { convertBaseToFloat, isMarketSpot } from '../../utils/common'
 import { getDefaultMarketMarginModeFromFlags } from '../../utils/marketFlags'
+import {
+  isSizedTpSlOrder,
+  isTakeProfitOrder,
+  isWholePositionTpSlOrder,
+} from '../../utils/positionTpSl'
 import {
   selectCurrentMarket,
   selectCurrentMarketId,
@@ -21,6 +30,7 @@ import { selectCurrentRfqIds } from '../preferences/selectors'
 import type {
   ActiveRfqIntent,
   AssetBalance,
+  BOPosition,
   Order,
   Position,
   Rfq,
@@ -39,6 +49,7 @@ const DEFAULT_ASSET_BALANCES: Record<string, AssetBalance> = {}
 const DEFAULT_SPOT_AVG_ENTRY_PRICES: Record<string, SpotAvgEntryPrice> = {}
 const DEFAULT_INACTIVE_ORDERS: Record<string, Order[]> = {}
 const DEFAULT_TRADES: Record<string, Trade[]> = {}
+const DEFAULT_BO_POSITIONS: Record<string, BOPosition> = {}
 const DEFAULT_SHARES: Share[] = []
 const DEFAULT_RFQS: Record<string, Record<string, Rfq>> = {}
 
@@ -50,12 +61,16 @@ const processPositions = (positions = DEFAULT_ACCOUNT_POSITIONS): Record<string,
 export const filterIsolatedPositions = (
   positions?: Record<string, Position>,
 ): Record<string, Position> | undefined =>
-  positions ? pickBy(positions, (position) => position.margin_mode === MarginMode.CROSS) : positions
+  positions
+    ? pickBy(positions, (position) => position.margin_mode === AccountPositionMarginModeEnum.Cross)
+    : positions
 
 const filterCrossPositions = (
   positions?: Record<string, Position>,
 ): Record<string, Position> | undefined =>
-  positions ? pickBy(positions, (position) => position.margin_mode !== MarginMode.CROSS) : positions
+  positions
+    ? pickBy(positions, (position) => position.margin_mode !== AccountPositionMarginModeEnum.Cross)
+    : positions
 
 const selectAccounts = (state: AccountsSlice) => state.accounts
 
@@ -122,7 +137,7 @@ export const selectRfqActiveIntent = createSelector(
     return {
       ...counts,
       createdAt: rfq.created_at,
-      isShort: rfq.direction === 0,
+      isShort: rfq.direction === RFQEntryDirectionEnum.Sell,
       marketId: rfq.market_index,
       ...(rfq.base_amount > 0 && {
         baseAmount: convertBaseToFloat(rfq.base_amount, currentMarket.size_decimals).toString(),
@@ -142,6 +157,23 @@ export const selectRfqActiveIntent = createSelector(
 export const selectRawPositions = createSelector(
   [selectAccount],
   createTracking('selectRawPositions', (account) => account?.positions),
+)
+
+export const selectRawBOPositions = createSelector(
+  selectAccount,
+  createTracking('selectRawBOPositions', (account) => account?.boPositions),
+)
+
+export const selectBOPositions = createSelector(
+  [selectRawBOPositions],
+  createTracking('selectBOPositions', (rawBOPositions = DEFAULT_BO_POSITIONS) =>
+    pickBy(rawBOPositions, (position) => position.size !== 0),
+  ),
+)
+
+export const selectBOPositionCount = createSelector(
+  [selectBOPositions],
+  createTracking('selectBOPositionCount', (boPositions) => Object.keys(boPositions).length),
 )
 
 export const selectPositions = createSelector(
@@ -212,6 +244,47 @@ export const selectActiveOrders = createSelector(
   createTracking('selectActiveOrders', (account) => account?.activeOrders ?? DEFAULT_ACTIVE_ORDERS),
 )
 
+export const selectActiveParentOrders = createSelector(
+  [selectActiveOrders],
+  createTracking('selectActiveParentOrders', (activeOrders) => {
+    const parentOrderById: Record<string, Order> = {}
+    Object.values(activeOrders).forEach((orders) => {
+      orders.forEach((order) => {
+        parentOrderById[order.order_id] = order
+      })
+    })
+    return parentOrderById
+  }),
+)
+
+export const selectBOActiveOrders = createSelector(
+  [selectAccount],
+  createTracking(
+    'selectBOActiveOrders',
+    (account) => account?.boActiveOrders ?? DEFAULT_ACTIVE_ORDERS,
+  ),
+)
+
+export const selectBOActiveOrderCount = createSelector(
+  [selectBOActiveOrders],
+  createTracking('selectBOActiveOrderCount', (boActiveOrders) =>
+    Object.values(boActiveOrders).reduce((acc, orders) => acc + orders.length, 0),
+  ),
+)
+
+export const selectBOInactiveOrders = createSelector(
+  [selectAccount],
+  createTracking(
+    'selectBOInactiveOrders',
+    (account) => account?.boInactiveOrders ?? DEFAULT_INACTIVE_ORDERS,
+  ),
+)
+
+export const selectBOTrades = createSelector(
+  [selectAccount],
+  createTracking('selectBOTrades', (account) => account?.boTrades ?? DEFAULT_TRADES),
+)
+
 export const selectActiveOrdersByMarketId = createSelector(
   [selectActiveOrders, selectMarketId],
   createTracking(
@@ -275,7 +348,7 @@ export const selectMarginMode = createSelector(
   [selectRawPositions, selectOrderBookMeta],
   createTracking('selectMarginMode', (positions, market) => {
     if (isMarketSpot(market)) {
-      return MarginMode.CROSS
+      return AccountPositionMarginModeEnum.Cross
     }
 
     return (
@@ -283,21 +356,6 @@ export const selectMarginMode = createSelector(
       getDefaultMarketMarginModeFromFlags(market.market_flags)
     )
   }),
-)
-
-export const selectWeeklyVolume = createSelector(
-  [selectAccount],
-  createTracking('selectWeeklyVolume', (account) => account?.weeklyVolume ?? null),
-)
-
-export const selectDailyVolume = createSelector(
-  [selectAccount],
-  createTracking('selectDailyVolume', (account) => account?.dailyVolume ?? null),
-)
-
-export const selectMonthlyVolume = createSelector(
-  [selectAccount],
-  createTracking('selectMonthlyVolume', (account) => account?.monthlyVolume ?? null),
 )
 
 export const selectTotalVolume = createSelector(
@@ -368,15 +426,12 @@ export const selectCanModifyMarginMode = createSelector(
 )
 
 export const selectPositionTiedTPandSLOrders = createSelector(
-  [selectActiveOrdersByMarketId],
-  createTracking('selectPositionTiedTPandSLOrders', (orders) =>
+  [selectActiveOrdersByMarketId, selectPosition],
+  createTracking('selectPositionTiedTPandSLOrders', (orders, position) =>
     orders?.filter(
       (order) =>
-        (order.type === OrderTypeEnum.StopLoss ||
-          order.type === OrderTypeEnum.StopLossLimit ||
-          order.type === OrderTypeEnum.TakeProfit ||
-          order.type === OrderTypeEnum.TakeProfitLimit) &&
-        order.trigger_status === OrderTriggerStatusEnum.MarkPrice,
+        isWholePositionTpSlOrder(order) ||
+        (position !== undefined && isSizedTpSlOrder(order, position.sign >= 0)),
     ),
   ),
 )
@@ -384,23 +439,13 @@ export const selectPositionTiedTPandSLOrders = createSelector(
 export const selectPositionTiedSLOrder = createSelector(
   [selectActiveOrdersByMarketId],
   createTracking('selectPositionTiedSLOrder', (orders) =>
-    orders?.find(
-      (order) =>
-        (order.type === OrderTypeEnum.StopLoss || order.type === OrderTypeEnum.StopLossLimit) &&
-        order.trigger_status === OrderTriggerStatusEnum.MarkPrice &&
-        order.initial_base_amount === 0,
-    ),
+    orders?.find((order) => isWholePositionTpSlOrder(order) && !isTakeProfitOrder(order)),
   ),
 )
 
 export const selectPositionTiedTPOrder = createSelector(
   [selectActiveOrdersByMarketId],
   createTracking('selectPositionTiedTPOrder', (orders) =>
-    orders?.find(
-      (order) =>
-        (order.type === OrderTypeEnum.TakeProfit || order.type === OrderTypeEnum.TakeProfitLimit) &&
-        order.trigger_status === OrderTriggerStatusEnum.MarkPrice &&
-        order.initial_base_amount === 0,
-    ),
+    orders?.find((order) => isWholePositionTpSlOrder(order) && isTakeProfitOrder(order)),
   ),
 )

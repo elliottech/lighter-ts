@@ -1,18 +1,19 @@
-import type { ExtendedUserTier } from '../types/user-tiers'
-
-import { isRobinhoodEnv } from '../lib/env'
+import { defaultLighterFeeTiers, defaultRobinhoodFeeTiers } from '../fallbacks/defaults'
+import { isRobinhoodFeeTiers } from '../lib/env'
+import { formatPercentage } from './formatting'
+import { getMaxSubAccountCount } from './getMaxSubAccountCount'
+import type { BackendFeeTier, BackendFeeTiers, ExtendedUserTier } from '../types/user-tiers'
 
 export type FeeRateType = 'maker' | 'taker'
 export type SupportedTier = NonNullable<ExtendedUserTier>
-type PremiumTier = Exclude<SupportedTier, 'standard' | 'plus'>
-// Mirrors the BE UserTiers config (MakerFeeTicks / TakerFeeTicks / TWAPFeeTicks)
-type LighterPlanFees = Record<FeeRateType | 'twap', number>
+export type PremiumTier = Exclude<SupportedTier, 'standard' | 'plus'>
+type PlanFees = Record<FeeRateType | 'twap', number>
 
 export type FeeTierConfig<Tier extends SupportedTier> = {
   key: Tier
   // Lighter tiers are earned by staked LIT, Robinhood tiers by trailing 14-day volume
   stakedLit: number
-  minVolume?: number
+  minVolume: number
   // sendTx / sendTxBatch calls per minute
   rateLimit: number
   discountPercent: string
@@ -22,263 +23,180 @@ export type FeeTierConfig<Tier extends SupportedTier> = {
   twap: number
   takerLatency: string
   latencyImprovement: string
+  maxSubAccounts: number
 }
 
-// Standard runs on the backend defaults (no sendTx bucket or taker delay of its own)
-export const LIGHTER_STANDARD_FEE_TIER: FeeTierConfig<'standard'> = {
-  key: 'standard',
-  stakedLit: 0,
-  rateLimit: 4000,
-  discountPercent: '-',
-  maker: 0,
-  taker: 0,
-  twap: 0.0001,
-  takerLatency: '300ms',
-  latencyImprovement: '-',
+export type FeeTierConfigs = {
+  standard: FeeTierConfig<'standard'>
+  plus: FeeTierConfig<'plus'>
+  premium: FeeTierConfig<PremiumTier>[]
 }
 
-export const LIGHTER_PLUS_FEE_TIER: FeeTierConfig<'plus'> = {
-  key: 'plus',
-  stakedLit: 0,
-  rateLimit: 4000,
-  discountPercent: '-',
-  maker: 0.00005,
-  taker: 0.00005,
-  twap: 0,
-  takerLatency: '300ms',
-  latencyImprovement: '-',
+const FEE_TICK = 1_000_000
+export const getFeePercentage = (fee: number) => fee / FEE_TICK
+
+type TierLimits = Pick<
+  FeeTierConfig<SupportedTier>,
+  'rateLimit' | 'twap' | 'takerLatency' | 'latencyImprovement'
+>
+
+const limits = (
+  rateLimit: number,
+  takerLatency: string,
+  latencyImprovement = '-',
+  twap = 0,
+): TierLimits => ({ rateLimit, twap, takerLatency, latencyImprovement })
+
+const LIGHTER_TIER_LIMITS: Record<SupportedTier, TierLimits> = {
+  standard: limits(40, '300ms', '-', 0.0001),
+  plus: limits(4000, '300ms'),
+  premium: limits(4000, '140ms'),
+  premium_1: limits(5000, '140ms'),
+  premium_2: limits(6000, '140ms'),
+  premium_3: limits(7000, '140ms'),
+  premium_4: limits(8000, '140ms'),
+  premium_5: limits(12000, '140ms'),
+  premium_6: limits(24000, '140ms'),
+  premium_7: limits(72000, '140ms'),
 }
 
-// Canonical premium fee tier data shared by comparison logic and fee tier UI:
-// https://apidocs.lighter.xyz/docs/account-types
-export const LIGHTER_PREMIUM_FEE_TIERS: FeeTierConfig<PremiumTier>[] = [
-  {
-    key: 'premium',
-    stakedLit: 0,
-    rateLimit: 4000,
-    discountPercent: '-',
-    maker: 0.00004,
-    taker: 0.00028,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_1',
-    stakedLit: 1000,
-    rateLimit: 5000,
-    discountPercent: '2.5%',
-    maker: 0.000039,
-    taker: 0.000273,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_2',
-    stakedLit: 3000,
-    rateLimit: 6000,
-    discountPercent: '5%',
-    maker: 0.000038,
-    taker: 0.000266,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_3',
-    stakedLit: 10000,
-    rateLimit: 7000,
-    discountPercent: '10%',
-    maker: 0.000036,
-    taker: 0.000252,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_4',
-    stakedLit: 30000,
-    rateLimit: 8000,
-    discountPercent: '15%',
-    maker: 0.000034,
-    taker: 0.000238,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_5',
-    stakedLit: 100000,
-    rateLimit: 12000,
-    discountPercent: '20%',
-    maker: 0.000032,
-    taker: 0.000224,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_6',
-    stakedLit: 300000,
-    rateLimit: 24000,
-    discountPercent: '25%',
-    maker: 0.00003,
-    taker: 0.00021,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_7',
-    stakedLit: 500000,
-    rateLimit: 48000,
-    discountPercent: '30%',
-    maker: 0.000028,
-    taker: 0.000196,
-    twap: 0,
-    takerLatency: '140ms',
-    latencyImprovement: '-',
-  },
-]
-
-// Robinhood premium tiers are assigned by trailing 14-day volume, not staked
-// LIT: https://apidocs.rh.lighter.xyz/docs/account-types
-export const ROBINHOOD_PREMIUM_FEE_TIERS: FeeTierConfig<PremiumTier>[] = [
-  {
-    key: 'premium',
-    stakedLit: 0,
-    minVolume: 0,
-    rateLimit: 4000,
-    discountPercent: '-',
-    maker: 0.00012,
-    taker: 0.00035,
-    twap: 0,
-    takerLatency: '200ms',
-    latencyImprovement: '-',
-  },
-  {
-    key: 'premium_1',
-    stakedLit: 0,
-    minVolume: 1_000_000,
-    rateLimit: 5000,
-    discountPercent: '2.5%',
-    maker: 0.000117,
-    taker: 0.000341,
-    twap: 0,
-    takerLatency: '195ms',
-    latencyImprovement: '2.5%',
-  },
-  {
-    key: 'premium_2',
-    stakedLit: 0,
-    minVolume: 10_000_000,
-    rateLimit: 6000,
-    discountPercent: '5%',
-    maker: 0.000114,
-    taker: 0.000333,
-    twap: 0,
-    takerLatency: '190ms',
-    latencyImprovement: '5%',
-  },
-  {
-    key: 'premium_3',
-    stakedLit: 0,
-    minVolume: 20_000_000,
-    rateLimit: 7000,
-    discountPercent: '10%',
-    maker: 0.000108,
-    taker: 0.000315,
-    twap: 0,
-    takerLatency: '180ms',
-    latencyImprovement: '10%',
-  },
-  {
-    key: 'premium_4',
-    stakedLit: 0,
-    minVolume: 50_000_000,
-    rateLimit: 8000,
-    discountPercent: '15%',
-    maker: 0.000102,
-    taker: 0.000298,
-    twap: 0,
-    takerLatency: '170ms',
-    latencyImprovement: '15%',
-  },
-  {
-    key: 'premium_5',
-    stakedLit: 0,
-    minVolume: 200_000_000,
-    rateLimit: 12000,
-    discountPercent: '20%',
-    maker: 0.000096,
-    taker: 0.00028,
-    twap: 0,
-    takerLatency: '160ms',
-    latencyImprovement: '20%',
-  },
-  {
-    key: 'premium_6',
-    stakedLit: 0,
-    minVolume: 500_000_000,
-    rateLimit: 24000,
-    discountPercent: '30%',
-    maker: 0.000084,
-    taker: 0.000245,
-    twap: 0,
-    takerLatency: '150ms',
-    latencyImprovement: '25%',
-  },
-]
-
-export const ROBINHOOD_STANDARD_FEE_TIER: FeeTierConfig<'standard'> = {
-  key: 'standard',
-  stakedLit: 0,
-  minVolume: 0,
-  rateLimit: 4000,
-  discountPercent: '-',
-  maker: 0,
-  taker: 0,
-  twap: 0,
-  takerLatency: '300ms',
-  latencyImprovement: '-',
+const ROBINHOOD_TIER_LIMITS: Record<SupportedTier, TierLimits> = {
+  standard: limits(40, '300ms', '-', 0.0001),
+  plus: limits(8000, '300ms'),
+  premium: limits(4000, '200ms'),
+  premium_1: limits(5000, '195ms', '2.5%'),
+  premium_2: limits(6000, '190ms', '5%'),
+  premium_3: limits(7000, '180ms', '10%'),
+  premium_4: limits(8000, '170ms', '15%'),
+  premium_5: limits(12000, '160ms', '20%'),
+  premium_6: limits(24000, '150ms', '25%'),
+  premium_7: limits(48000, '150ms', '25%'),
 }
 
-export const getPremiumFeeTiers = () =>
-  isRobinhoodEnv() ? ROBINHOOD_PREMIUM_FEE_TIERS : LIGHTER_PREMIUM_FEE_TIERS
+const isSupportedTier = (name: string): name is SupportedTier => name in LIGHTER_TIER_LIMITS
 
-const toPlanFees = ({ maker, taker, twap }: FeeTierConfig<SupportedTier>): LighterPlanFees => ({
+const formatDiscount = (fee: number, baseFee: number) => {
+  const discount = baseFee > 0 ? 1 - fee / baseFee : 0
+  return discount > 0
+    ? formatPercentage(discount, { maximumFractionDigits: 2, roundingMode: 'halfExpand' })
+    : '-'
+}
+
+const getLatencyImprovement = (
+  tier: BackendFeeTier,
+  fallback: TierLimits,
+  base?: BackendFeeTier,
+) => {
+  if (tier.taker_latency_ms === undefined) return fallback.latencyImprovement
+  if (!base?.taker_latency_ms) return '-'
+  const improvement = 1 - tier.taker_latency_ms / base.taker_latency_ms
+  return improvement > 0
+    ? formatPercentage(improvement, { maximumFractionDigits: 2, roundingMode: 'halfExpand' })
+    : '-'
+}
+
+const toTierLimits = (
+  tier: BackendFeeTier,
+  fallback: TierLimits,
+  base?: BackendFeeTier,
+): TierLimits => ({
+  rateLimit: tier.send_tx_rate_limit || fallback.rateLimit,
+  twap: tier.twap_fee_ticks === undefined ? fallback.twap : getFeePercentage(tier.twap_fee_ticks),
+  takerLatency:
+    tier.taker_latency_ms === undefined ? fallback.takerLatency : `${tier.taker_latency_ms}ms`,
+  latencyImprovement: getLatencyImprovement(tier, fallback, base),
+})
+
+const toFeeTierConfig = <Tier extends SupportedTier>(
+  tier: BackendFeeTier & { name: Tier },
+  tierLimits: Record<SupportedTier, TierLimits>,
+  base?: BackendFeeTier,
+): FeeTierConfig<Tier> => ({
+  key: tier.name,
+  stakedLit: tier.required_lit_stakes,
+  minVolume: tier.required_volume,
+  discountPercent: base ? formatDiscount(tier.maker_fee_ticks, base.maker_fee_ticks) : '-',
+  maker: getFeePercentage(tier.maker_fee_ticks),
+  taker: getFeePercentage(tier.taker_fee_ticks),
+  ...toTierLimits(tier, tierLimits[tier.name], base),
+  maxSubAccounts: tier.max_sub_accounts || getMaxSubAccountCount(tier.name),
+})
+
+const getDefaultFeeTiers = (): BackendFeeTiers =>
+  isRobinhoodFeeTiers() ? defaultRobinhoodFeeTiers : defaultLighterFeeTiers
+
+const buildFeeTierConfigs = (feeTiers: BackendFeeTiers): FeeTierConfigs | null => {
+  const tierLimits = isRobinhoodFeeTiers() ? ROBINHOOD_TIER_LIMITS : LIGHTER_TIER_LIMITS
+  const tiers = feeTiers.user_tiers.filter(
+    (tier): tier is BackendFeeTier & { name: SupportedTier } => isSupportedTier(tier.name),
+  )
+  const standard = tiers.find(
+    (tier): tier is BackendFeeTier & { name: 'standard' } => tier.name === 'standard',
+  )
+  const plus = tiers.find((tier): tier is BackendFeeTier & { name: 'plus' } => tier.name === 'plus')
+  const premium = tiers
+    .filter((tier): tier is BackendFeeTier & { name: PremiumTier } =>
+      tier.name.startsWith('premium'),
+    )
+    .sort(
+      (a, b) =>
+        a.required_lit_stakes + a.required_volume - (b.required_lit_stakes + b.required_volume),
+    )
+  const basePremium = premium[0]
+
+  if (!standard || !plus || !basePremium) {
+    return null
+  }
+
+  return {
+    standard: toFeeTierConfig(standard, tierLimits),
+    plus: toFeeTierConfig(plus, tierLimits),
+    premium: premium.map((tier) => toFeeTierConfig(tier, tierLimits, basePremium)),
+  }
+}
+
+export const resolveFeeTiers = (
+  feeTiers: BackendFeeTiers | null,
+  fallbackFeeTiers: BackendFeeTiers | null = null,
+): BackendFeeTiers => feeTiers ?? fallbackFeeTiers ?? getDefaultFeeTiers()
+
+// The default tiers always hold all three plans (see fees.test.ts)
+export const toFeeTierConfigs = (
+  feeTiers: BackendFeeTiers,
+  fallbackFeeTiers: BackendFeeTiers | null = null,
+): FeeTierConfigs =>
+  buildFeeTierConfigs(feeTiers) ??
+  buildFeeTierConfigs(resolveFeeTiers(null, fallbackFeeTiers)) ??
+  buildFeeTierConfigs(getDefaultFeeTiers())!
+
+const toPlanFees = ({ maker, taker, twap }: FeeTierConfig<SupportedTier>): PlanFees => ({
   maker,
   taker,
   twap,
 })
 
-const toPremiumPlanFees = (tiers: FeeTierConfig<PremiumTier>[]) =>
-  tiers.reduce<Record<PremiumTier, LighterPlanFees>>(
-    (feesByTier, tier) => {
-      feesByTier[tier.key] = toPlanFees(tier)
-      return feesByTier
-    },
-    {} as Record<PremiumTier, LighterPlanFees>,
-  )
-
-export const LIGHTER_PLAN_FEES: Record<SupportedTier, LighterPlanFees> = {
-  standard: toPlanFees(LIGHTER_STANDARD_FEE_TIER),
-  plus: toPlanFees(LIGHTER_PLUS_FEE_TIER),
-  ...toPremiumPlanFees(LIGHTER_PREMIUM_FEE_TIERS),
+// A tier the backend does not list (Robinhood has no premium_7) pays the top premium rate
+export const getPlanFees = (configs: FeeTierConfigs, tier: ExtendedUserTier): PlanFees => {
+  if (!tier || tier === 'standard') return toPlanFees(configs.standard)
+  if (tier === 'plus') return toPlanFees(configs.plus)
+  const premium =
+    configs.premium.find(({ key }) => key === tier) ?? configs.premium[configs.premium.length - 1]!
+  return toPlanFees(premium)
 }
 
-const ROBINHOOD_TOP_TIER = ROBINHOOD_PREMIUM_FEE_TIERS[ROBINHOOD_PREMIUM_FEE_TIERS.length - 1]!
+// Get fee percentages from AccountLimits if available, otherwise fall back to tier-based calculation
+export const getFeePercentageFromTier = (
+  tier: ExtendedUserTier,
+  feeTicks: { takerFeeTick: number; makerFeeTick: number } | null,
+  feeTierConfigs: FeeTierConfigs,
+) => {
+  // If fee ticks are provided, use them (for premium accounts with backend-provided fees)
+  if (feeTicks) {
+    return {
+      taker: getFeePercentage(feeTicks.takerFeeTick),
+      maker: getFeePercentage(feeTicks.makerFeeTick),
+    }
+  }
 
-// Same shape as the Lighter table so every lookup only differs by env. Robinhood
-// has no Plus tier and seven volume tiers; the unreachable keys mirror their
-// nearest real tier rather than leaving holes in the record.
-const ROBINHOOD_PLAN_FEES: Record<SupportedTier, LighterPlanFees> = {
-  standard: toPlanFees(ROBINHOOD_STANDARD_FEE_TIER),
-  plus: toPlanFees(ROBINHOOD_STANDARD_FEE_TIER),
-  ...toPremiumPlanFees(ROBINHOOD_PREMIUM_FEE_TIERS),
-  premium_7: toPlanFees(ROBINHOOD_TOP_TIER),
+  return getPlanFees(feeTierConfigs, tier)
 }
-
-export const getPlanFees = (tier: ExtendedUserTier): LighterPlanFees =>
-  (isRobinhoodEnv() ? ROBINHOOD_PLAN_FEES : LIGHTER_PLAN_FEES)[tier ?? 'standard']

@@ -1,67 +1,46 @@
 import '@formatjs/intl-getcanonicallocales/polyfill.js'
 import '@formatjs/intl-locale/polyfill.js'
 import '@formatjs/intl-pluralrules/polyfill.js'
-import '@formatjs/intl-pluralrules/locale-data/en'
+import '@formatjs/intl-pluralrules/locale-data/en.js'
 import '@formatjs/intl-numberformat/polyfill.js'
-import '@formatjs/intl-numberformat/locale-data/en'
+import '@formatjs/intl-numberformat/locale-data/en.js'
 
-import {
-  AccountApi,
-  AnnouncementApi,
-  BridgeApi,
-  CandlestickApi,
-  FundingApi,
-  InfoApi,
-  MarketnewsApi,
-  NotificationApi,
-  OrderApi,
-  ReferralApi,
-  RootApi,
-  StockfinancialsApi,
-  TokenlistApi,
-  TransactionApi,
-  AtomicordersApi,
-} from 'zklighter-perps'
 import { persistence, type Persistence } from '../lib/persistence'
-import { currentEnv, isRobinhoodEnv, type Env } from '../lib/env'
+import { currentEnv, type Env } from '../lib/env'
 import { sha256, type Sha256 } from '../lib/sha256'
 import { websocketConfig, type WebsocketConfig } from '../ws-sub-store/websocketConfig'
 import { errorReporting, type CaptureException } from '../lib/errorReporting'
 import { errorToast, type ShowToastFromError } from '../lib/errorToast'
 import type { Signers } from '../types/signers'
 import type { Platform } from '../types/Platform'
-import { apis } from '../lib/apis'
-import { transactionConfig } from '../lib/transactionConfig'
+import { type Apis, apis } from '../lib/apis'
+import { type GenerateClientOrderIndex, transactionConfig } from '../lib/transactionConfig'
+import { restApiConfig } from '../lib/restApiConfig'
+import { rpcConfig } from '../lib/rpcConfig'
 import { useLighterStore } from '../store/useLighterStore'
+import { type Fallbacks, type TokensOnlyFallbacks, fallbackData } from '../fallbacks'
+import { applyFallbackTokens, applyFallbacks } from './applyFallbacks'
+import { waitForApiMetas } from './waitForApiMetas'
 
 type InitCommonPackageParams = {
   setItem: Persistence['setItem']
   getItem: Persistence['getItem']
   env: Env
   sha256: Sha256
-  accountApi: AccountApi
-  announcementApi: AnnouncementApi
-  bridgeApi: BridgeApi
-  candlesticksApi: CandlestickApi
-  fundingApi: FundingApi
-  infoApi: InfoApi
-  notificationApi: NotificationApi
-  orderApi: OrderApi
-  referralApi: ReferralApi
-  rootApi: RootApi
-  stockFinancialsApi: StockfinancialsApi
-  tokenlistApi: TokenlistApi
-  transactionApi: TransactionApi
-  atomicordersApi: AtomicordersApi
-  marketNewsApi: MarketnewsApi
-  websocketConfigParam: WebsocketConfig
+  apiClients: Apis
+  websocketConfigParam: Omit<WebsocketConfig, 'boEnabled'> &
+    Partial<Pick<WebsocketConfig, 'boEnabled'>>
   captureException: CaptureException
   showToastFromError: ShowToastFromError
   signers: Signers
   getApiKeyIndex: () => number
   getPlatform: () => Platform
+  generateClientOrderIndex: GenerateClientOrderIndex
   isRegistered: (accountIndex: number) => boolean
+  rpcToken: string | null
+  restApiBase?: string
   skipNonce?: boolean
+  fallbacks: Fallbacks | TokensOnlyFallbacks | null
 }
 
 export const initCommonPackage = ({
@@ -69,68 +48,52 @@ export const initCommonPackage = ({
   getItem,
   env,
   sha256: sha256Impl,
-  accountApi,
-  announcementApi,
-  bridgeApi,
-  candlesticksApi,
-  fundingApi,
-  infoApi,
-  notificationApi,
-  orderApi,
-  referralApi,
-  rootApi,
-  stockFinancialsApi,
-  tokenlistApi,
-  transactionApi,
-  atomicordersApi,
-  marketNewsApi,
+  apiClients,
   websocketConfigParam,
   captureException: captureExceptionImpl,
   showToastFromError,
   signers,
   getApiKeyIndex,
   getPlatform,
+  generateClientOrderIndex,
   isRegistered,
+  rpcToken,
+  restApiBase,
   skipNonce = false,
+  fallbacks,
 }: InitCommonPackageParams) => {
   persistence.setItem = setItem
   persistence.getItem = getItem
   currentEnv.env = env
   sha256.digest = sha256Impl.digest
-  apis.accountApi = accountApi
-  apis.announcementApi = announcementApi
-  apis.bridgeApi = bridgeApi
-  apis.candlesticksApi = candlesticksApi
-  apis.fundingApi = fundingApi
-  apis.infoApi = infoApi
-  apis.notificationApi = notificationApi
-  apis.orderApi = orderApi
-  apis.referralApi = referralApi
-  apis.rootApi = rootApi
-  apis.stockFinancialsApi = stockFinancialsApi
-  apis.tokenlistApi = tokenlistApi
-  apis.transactionApi = transactionApi
-  apis.atomicordersApi = atomicordersApi
-  apis.marketNewsApi = marketNewsApi
+  rpcConfig.token = rpcToken
+  restApiConfig.base = restApiBase ?? null
+  Object.assign(apis, apiClients)
   websocketConfig.flushInterval = websocketConfigParam.flushInterval
   websocketConfig.throttleInterval = websocketConfigParam.throttleInterval
+  websocketConfig.accountThrottleInterval = websocketConfigParam.accountThrottleInterval
+  websocketConfig.boEnabled = websocketConfigParam.boEnabled ?? false
   errorReporting.captureException = captureExceptionImpl
   errorToast.showToastFromError = showToastFromError
   transactionConfig.signers = signers
   transactionConfig.isRegistered = isRegistered
   transactionConfig.getApiKeyIndex = getApiKeyIndex
   transactionConfig.getPlatform = getPlatform
+  transactionConfig.generateClientOrderIndex = generateClientOrderIndex
   transactionConfig.skipNonce = skipNonce
 
-  // The store is created at import time with bundled fallback data (Lighter
-  // markets/assets/tokens). Robinhood runs against a different exchange, so seed
-  // empty collections instead and let the API/WS populate the real data.
-  if (isRobinhoodEnv()) {
-    useLighterStore.setState({
-      perpsOrderBookMetas: {},
-      spotOrderBookMetas: {},
-      assetMetas: {},
-      tokens: [],
-    })
+  const envFallbacks = fallbacks?.env === env ? fallbacks : null
+  fallbackData.tokens = envFallbacks?.tokens ?? null
+
+  if (envFallbacks && 'orderBookMetas' in envFallbacks) {
+    fallbackData.current = envFallbacks
+    fallbackData.ready = Promise.resolve()
+    useLighterStore.setState((state) => applyFallbacks(state, envFallbacks))
+  } else {
+    const { tokens } = fallbackData
+    if (tokens) {
+      useLighterStore.setState((state) => ({ tokens: applyFallbackTokens(state, tokens) }))
+    }
+    fallbackData.ready = waitForApiMetas()
   }
 }
