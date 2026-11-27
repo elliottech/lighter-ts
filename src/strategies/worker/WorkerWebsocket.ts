@@ -31,7 +31,7 @@ export const makeIsWorkerPriceFeedLive =
     isPriceFeedLive(useWsSubStore.getState(), wsPongTimeoutMs)
 
 /**
- * Worker-owned market-stats websocket. The react-store `init` subscribes to
+ * Worker-owned market-stats websocket. The `init` subscribes to
  * the perps and spot market-stats channels on open; every flush into
  * useLighterStore is copied into WorkerMarketData. The socket stays up only
  * while strategies are running: `websocketJanitor` closes it when idle and

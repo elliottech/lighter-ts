@@ -1,6 +1,6 @@
 // V2 maker/taker volume tracking: recomputes a finished order's maker/taker
 // split from the venue's REST trades endpoint instead of trusting the ws fill
-// deltas. Main-thread only (react-store REST) — the engines never import this.
+// deltas. Main-thread only — the engines never import this.
 
 import { type MarketMeta } from './engine/types'
 import { type Order, type WsTrade, roundNumber, wait } from '..'

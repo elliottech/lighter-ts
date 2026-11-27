@@ -305,7 +305,7 @@ export interface FillUpdate {
   restingOrder: Order
 }
 
-/** Live market data, injected so the engine never imports react-store. */
+/** Live market data */
 export interface MarketDataSource {
   getMarket(marketId: number): MarketMeta | undefined
   /** Index price in human (float) units, or null if unavailable. */
