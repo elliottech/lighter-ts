@@ -259,6 +259,10 @@ interface Window {
     usdcFee: number,
     memo?: Array<number>,
   ) => WasmResponse<{ pk: string; body: string }>
+  _signStrategyServerCommand: (
+    accountIndex: number,
+    payload: string,
+  ) => WasmResponse<{ signature: string }>
   _getAirdropAllocationMessage: (
     accountIndex: number,
     allocations: string,

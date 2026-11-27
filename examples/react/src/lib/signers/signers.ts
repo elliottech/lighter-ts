@@ -324,6 +324,11 @@ export const signers: Signers = {
       processWasmError,
     ),
 
+  signStrategyServerCommand: ({ accountIndex, payload }) =>
+    processWasmCall(window._signStrategyServerCommand(accountIndex, payload)).then(
+      processWasmError,
+    ),
+
   getAirdropAllocationMessage: ({ accountIndex, allocations }) =>
     processWasmCall(window._getAirdropAllocationMessage(accountIndex, allocations)).then(
       processWasmError,

@@ -1,6 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  AccountTradingMode,
   API_KEY_INDEXES,
   selectAccountExistence,
   selectUserAccountIndex,
@@ -9,6 +8,7 @@ import {
   useUserAccount,
   useUserAddress,
 } from 'lighter-ts'
+import { AccountTradingMode } from '../const/ACCOUNT_TRADING_MODE'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useChangeAccountConfigMutation } from '../hooks/useChangeAccountConfigMutation'
 import { useChangePubKeyMutation } from '../hooks/useChangePubKeyMutation'

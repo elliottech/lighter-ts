@@ -103,10 +103,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@formatjs/bigdecimal@npm:0.2.7":
-  version: 0.2.7
-  resolution: "@formatjs/bigdecimal@npm:0.2.7"
-  checksum: 10c0/9583a4d615553d1353284d0f66d30b6d7ab54b8d57c50f14d42db5fa48029b01c26ac7705b493c4bde716fcffbaee4d2f3cfcb6550d6c111e3a33bcc61cc719a
+"@formatjs/bigdecimal@npm:0.2.10":
+  version: 0.2.10
+  resolution: "@formatjs/bigdecimal@npm:0.2.10"
+  checksum: 10c0/322ec2881c6f6c89fcdcc5cbf94cf43fc381ceaf1f250848f3570387bdbf99c18f005569f9cd590a72708dea4296245f5f2bf6c910740c360f39d7b91166284c
   languageName: node
   linkType: hard
 
@@ -117,58 +117,58 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@formatjs/intl-getcanonicallocales@npm:3.2.11":
-  version: 3.2.11
-  resolution: "@formatjs/intl-getcanonicallocales@npm:3.2.11"
-  checksum: 10c0/8083c055fc4c86e307a70266f06489745e1e17f44539a5742023a5224ed6672b513905d2f1acab4b13f586e70a9416f8eb53cb4ac9eafb149a5e6055a2f96db2
+"@formatjs/intl-getcanonicallocales@npm:3.3.1":
+  version: 3.3.1
+  resolution: "@formatjs/intl-getcanonicallocales@npm:3.3.1"
+  checksum: 10c0/e764cf712107bde387c23290c18cc610519323cca106d198d928542f252bcf41f7ac15396deb9185581e69aa4944bca0b51b1bd5d6e7ecc48c31a8f54b7148ce
   languageName: node
   linkType: hard
 
-"@formatjs/intl-locale@npm:5.3.10":
-  version: 5.3.10
-  resolution: "@formatjs/intl-locale@npm:5.3.10"
+"@formatjs/intl-locale@npm:5.4.3":
+  version: 5.4.3
+  resolution: "@formatjs/intl-locale@npm:5.4.3"
   dependencies:
-    "@formatjs/intl-getcanonicallocales": "npm:3.2.11"
-    "@formatjs/intl-supportedvaluesof": "npm:2.3.9"
-  checksum: 10c0/b2de54b5ff032b968b427ac65d45e6a0aca8aadb291819a61d4a12596c8782922d279a49eacd3d1c8c07b446127948f122f9420eb41741aee3076ca553514a6c
+    "@formatjs/intl-getcanonicallocales": "npm:3.3.1"
+    "@formatjs/intl-supportedvaluesof": "npm:3.0.1"
+  checksum: 10c0/74a4c14e93851364ad3d663a0c637f811e1126c2d22b09e969f9943d633f2bb5427d9ba2a6bda5d97b5d67e931da0b1a9fe2f45e1eb037f8ac16197a6d0d43f3
   languageName: node
   linkType: hard
 
-"@formatjs/intl-localematcher@npm:0.8.13":
-  version: 0.8.13
-  resolution: "@formatjs/intl-localematcher@npm:0.8.13"
-  dependencies:
-    "@formatjs/fast-memoize": "npm:3.1.7"
-  checksum: 10c0/8b36937837751b71c4957cfbae6f515edc9faf2ae341de0529b444aa8e1cdee19f59dce1c7c8b30f315aff082fd97dc96f27ea4e2cbadafb3c1d34247244e664
-  languageName: node
-  linkType: hard
-
-"@formatjs/intl-numberformat@npm:9.4.0":
-  version: 9.4.0
-  resolution: "@formatjs/intl-numberformat@npm:9.4.0"
-  dependencies:
-    "@formatjs/bigdecimal": "npm:0.2.7"
-    "@formatjs/intl-localematcher": "npm:0.8.13"
-  checksum: 10c0/abd4240d5761de0d036aa69a68b60888a1e437ba1a479e88df35ea5ba7997040ea136fdf17999e8577eae28a7b58368d0ce831638d7a0fb74c9b742e18237cf6
-  languageName: node
-  linkType: hard
-
-"@formatjs/intl-pluralrules@npm:6.3.13":
-  version: 6.3.13
-  resolution: "@formatjs/intl-pluralrules@npm:6.3.13"
-  dependencies:
-    "@formatjs/bigdecimal": "npm:0.2.7"
-    "@formatjs/intl-localematcher": "npm:0.8.13"
-  checksum: 10c0/7002a52e3d0d1126ef2e1703c0078dde2a33b162170d880da6f1aeae3e559487ec832761c115b76df2cbf7a4d1b40e648f0154b762b4acb9a78315a2990b4ea9
-  languageName: node
-  linkType: hard
-
-"@formatjs/intl-supportedvaluesof@npm:2.3.9":
-  version: 2.3.9
-  resolution: "@formatjs/intl-supportedvaluesof@npm:2.3.9"
+"@formatjs/intl-localematcher@npm:0.10.1":
+  version: 0.10.1
+  resolution: "@formatjs/intl-localematcher@npm:0.10.1"
   dependencies:
     "@formatjs/fast-memoize": "npm:3.1.7"
-  checksum: 10c0/7b3d8fe5c16e9c7d93ee34161cda4a91facad7c9dc33d0e8cf22c3acd6a09b405d98ea838473c290bc8fcc2053e3358b0874a5e9f88336c2c3c50b9e4e7f4cdc
+  checksum: 10c0/1c0a944a30cbb8285ad795ac9d88f6d3811bcd93cbce085c92656e19a3a6723c62ad70701685709a988d92db8e88dc8bcd99c6ae8fb79ee778e7284cd49a4554
+  languageName: node
+  linkType: hard
+
+"@formatjs/intl-numberformat@npm:10.0.4":
+  version: 10.0.4
+  resolution: "@formatjs/intl-numberformat@npm:10.0.4"
+  dependencies:
+    "@formatjs/bigdecimal": "npm:0.2.10"
+    "@formatjs/intl-localematcher": "npm:0.10.1"
+  checksum: 10c0/a4e01c044dbd816065acf63451168e94ddcf0733a438b8c09c3e4e3a4aa1c4a8d8e1405a79f1b3b15ea1d6d27433b99d278a1b486f4a4d0d88a3633149beedec
+  languageName: node
+  linkType: hard
+
+"@formatjs/intl-pluralrules@npm:7.0.4":
+  version: 7.0.4
+  resolution: "@formatjs/intl-pluralrules@npm:7.0.4"
+  dependencies:
+    "@formatjs/bigdecimal": "npm:0.2.10"
+    "@formatjs/intl-localematcher": "npm:0.10.1"
+  checksum: 10c0/8daff19fa36784fd269a831d18d9651c62e26fe737ebcb57eadf8c1c0c914adde8a1904ababcd27ed16ec0bf599af40a17265dcd92f52fbee3ec45d8d4877a60
+  languageName: node
+  linkType: hard
+
+"@formatjs/intl-supportedvaluesof@npm:3.0.1":
+  version: 3.0.1
+  resolution: "@formatjs/intl-supportedvaluesof@npm:3.0.1"
+  dependencies:
+    "@formatjs/fast-memoize": "npm:3.1.7"
+  checksum: 10c0/8407c773754bbab98ab998eaef7ae181b37e3d8d3c8c0a8b8a98aadef1048c1629d7d26c9a4d5ec5a3b41a8354d5c89416f148092e190ad89ef5c8262a69d9c2
   languageName: node
   linkType: hard
 
@@ -181,44 +181,44 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-darwin-arm64@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-darwin-arm64@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-darwin-arm64@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-darwin-arm64@npm:3.0.7"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-darwin-x64@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-darwin-x64@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-darwin-x64@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-darwin-x64@npm:3.0.7"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-linux-arm64@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-linux-arm64@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-linux-arm64@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-linux-arm64@npm:3.0.7"
   conditions: os=linux & cpu=arm64
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-linux-arm@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-linux-arm@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-linux-arm@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-linux-arm@npm:3.0.7"
   conditions: os=linux & cpu=arm
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-linux-x64@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-linux-x64@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-linux-x64@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-linux-x64@npm:3.0.7"
   conditions: os=linux & cpu=x64
   languageName: node
   linkType: hard
 
-"@msgpackr-extract/msgpackr-extract-win32-x64@npm:3.0.4":
-  version: 3.0.4
-  resolution: "@msgpackr-extract/msgpackr-extract-win32-x64@npm:3.0.4"
+"@msgpackr-extract/msgpackr-extract-win32-x64@npm:3.0.7":
+  version: 3.0.7
+  resolution: "@msgpackr-extract/msgpackr-extract-win32-x64@npm:3.0.7"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
@@ -535,21 +535,25 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@tanstack/query-core@npm:5.102.8":
-  version: 5.102.8
-  resolution: "@tanstack/query-core@npm:5.102.8"
-  checksum: 10c0/b8b8413c2372ff26605f63283f2bfe0edc17be1daad858a437d154ca38b30e8b6e47a5b8a0eb5c40b93fd66b8461f1cf2ac6cf5e1c9a03919d0079a0b4ae8bfa
+"@tanstack/query-core@npm:5.106.1":
+  version: 5.106.1
+  resolution: "@tanstack/query-core@npm:5.106.1"
+  checksum: 10c0/514065f943faacdaae39659fc936956906f51677a4385342508ff39c2846c6df8d6acba8ce6167ac3c86bda75a64b714f739f9ada82634e93524f6d6b70ad9f6
   languageName: node
   linkType: hard
 
-"@tanstack/react-query@npm:^5.102.8":
-  version: 5.102.8
-  resolution: "@tanstack/react-query@npm:5.102.8"
+"@tanstack/react-query@npm:5.106.1":
+  version: 5.106.1
+  resolution: "@tanstack/react-query@npm:5.106.1"
   dependencies:
-    "@tanstack/query-core": "npm:5.102.8"
+    "@tanstack/query-core": "npm:5.106.1"
   peerDependencies:
+    "@types/react": ^18 || ^19
     react: ^18 || ^19
-  checksum: 10c0/cae0b1c9eb4b6cce8679ebe58d0391cd247bc26c39105aaa4d2c624db14deb8c051f747f714aaa0dbe6bb3ac94c70e30af6423090e9014aa5c7c6ef6cf5b4af4
+  peerDependenciesMeta:
+    "@types/react":
+      optional: true
+  checksum: 10c0/508752957de016b2e8acabc2f1253716d732ba327a1e8897e187d5ea4ec0d250cee1fdaf1ec00251e1cce86cea27284c2240c5f1ab34d183a5e0a0d5b33a0715
   languageName: node
   linkType: hard
 
@@ -806,15 +810,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"i18next@npm:^26.4.1":
-  version: 26.4.2
-  resolution: "i18next@npm:26.4.2"
+"i18next@npm:^27.1.3":
+  version: 27.2.9
+  resolution: "i18next@npm:27.2.9"
   peerDependencies:
     typescript: ^5 || ^6 || ^7
   peerDependenciesMeta:
     typescript:
       optional: true
-  checksum: 10c0/f2c9613e03e09e56a84aee939d8fbe3442a58622915e11f97e47f9ab358dfa65be783230b37a21483152711f786fccfe697d7f5ea9269c54f16179dc59960e4b
+  checksum: 10c0/cfc18ce50ceebb9d55444facdc725ca71449e03426ff1bbf60ac148aaed42c330401201c041eeaa155d5eecd08e50279b5c28eb2d498826a6326d4ea89c88ee4
   languageName: node
   linkType: hard
 
@@ -839,7 +843,7 @@ __metadata:
   resolution: "lighter-ts-react-example@workspace:."
   dependencies:
     "@biomejs/biome": "npm:2.5.11"
-    "@tanstack/react-query": "npm:^5.102.8"
+    "@tanstack/react-query": "npm:5.106.1"
     "@types/lodash-es": "npm:^4.17.12"
     "@types/node": "npm:^24.13.3"
     "@types/react": "npm:^19.2.18"
@@ -847,7 +851,7 @@ __metadata:
     "@vitejs/plugin-react": "npm:^6.1.0"
     date-fns: "npm:^4.4.0"
     decimal.js: "npm:^10.6.0"
-    i18next: "npm:^26.4.1"
+    i18next: "npm:^27.1.3"
     lighter-ts: "portal:../.."
     lodash-es: "npm:^4.18.1"
     oxlint: "npm:^1.79.0"
@@ -857,7 +861,7 @@ __metadata:
     viem: "npm:2.56.1"
     vite: "npm:^8.2.2"
     wagmi: "npm:3.7.7"
-    zklighter-perps: "npm:1.0.301"
+    zklighter-perps: "npm:1.0.372"
     zod: "npm:^4.4.3"
     zustand: "npm:^5.0.15"
   languageName: unknown
@@ -867,23 +871,25 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "lighter-ts@portal:../..::locator=lighter-ts-react-example%40workspace%3A."
   dependencies:
-    "@formatjs/intl-getcanonicallocales": "npm:3.2.11"
-    "@formatjs/intl-locale": "npm:5.3.10"
-    "@formatjs/intl-numberformat": "npm:9.4.0"
-    "@formatjs/intl-pluralrules": "npm:6.3.13"
-    msgpackr: "npm:2.0.6"
+    "@formatjs/intl-getcanonicallocales": "npm:3.3.1"
+    "@formatjs/intl-locale": "npm:5.4.3"
+    "@formatjs/intl-numberformat": "npm:10.0.4"
+    "@formatjs/intl-pluralrules": "npm:7.0.4"
+    msgpackr: "npm:2.1.4"
     reselect: "npm:5.3.0"
   peerDependencies:
     "@tanstack/react-query": ">=5.100.14"
     "@types/react": ">=19.1.0 <20"
     date-fns: ">=4.3.0"
     decimal.js: ">=10.6.0"
-    i18next: ">=26.2.0"
+    i18next: ">=27.0.1"
     lodash-es: ">=4.18.1"
     react: ">=19.1.0 <20"
-    zklighter-perps: ">=1.0.301"
+    zklighter-perps: ">=1.0.372"
     zod: ">=4.4.3"
     zustand: ">=5.0.13"
+  bin:
+    strategies-server: dist/strategies-server/launcher.mjs
   languageName: node
   linkType: soft
 
@@ -1042,16 +1048,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"msgpackr-extract@npm:^3.0.4":
-  version: 3.0.4
-  resolution: "msgpackr-extract@npm:3.0.4"
+"msgpackr-extract@npm:^3.0.6":
+  version: 3.0.7
+  resolution: "msgpackr-extract@npm:3.0.7"
   dependencies:
-    "@msgpackr-extract/msgpackr-extract-darwin-arm64": "npm:3.0.4"
-    "@msgpackr-extract/msgpackr-extract-darwin-x64": "npm:3.0.4"
-    "@msgpackr-extract/msgpackr-extract-linux-arm": "npm:3.0.4"
-    "@msgpackr-extract/msgpackr-extract-linux-arm64": "npm:3.0.4"
-    "@msgpackr-extract/msgpackr-extract-linux-x64": "npm:3.0.4"
-    "@msgpackr-extract/msgpackr-extract-win32-x64": "npm:3.0.4"
+    "@msgpackr-extract/msgpackr-extract-darwin-arm64": "npm:3.0.7"
+    "@msgpackr-extract/msgpackr-extract-darwin-x64": "npm:3.0.7"
+    "@msgpackr-extract/msgpackr-extract-linux-arm": "npm:3.0.7"
+    "@msgpackr-extract/msgpackr-extract-linux-arm64": "npm:3.0.7"
+    "@msgpackr-extract/msgpackr-extract-linux-x64": "npm:3.0.7"
+    "@msgpackr-extract/msgpackr-extract-win32-x64": "npm:3.0.7"
     node-gyp: "npm:latest"
     node-gyp-build-optional-packages: "npm:5.2.2"
   dependenciesMeta:
@@ -1069,19 +1075,19 @@ __metadata:
       optional: true
   bin:
     download-msgpackr-prebuilds: bin/download-prebuilds.js
-  checksum: 10c0/582a9d17abbf3019e600e948736695056280ce401fd0235ee2474e95f9952208b9f6cce4d0e355b03b7d3c5630e6c3d11fe5fc27fdedb2311cce48de464338d8
+  checksum: 10c0/60e392bd77afc92b954adfd3501703d58a9baae2bcafd894e47c92820ec2b4c20483c5b959c03f8802b8b579f596877510a9f9c0e8f486c9e3780ff1362e4a54
   languageName: node
   linkType: hard
 
-"msgpackr@npm:2.0.6":
-  version: 2.0.6
-  resolution: "msgpackr@npm:2.0.6"
+"msgpackr@npm:2.1.4":
+  version: 2.1.4
+  resolution: "msgpackr@npm:2.1.4"
   dependencies:
-    msgpackr-extract: "npm:^3.0.4"
+    msgpackr-extract: "npm:^3.0.6"
   dependenciesMeta:
     msgpackr-extract:
       optional: true
-  checksum: 10c0/df6fff73d89775befbd9eddf1e0200007edbed842f2856018e637c14ccf492f55aebd86b294ab1ad42833a8c93db3cbe94cad1e99b070049b748697be9e1bf70
+  checksum: 10c0/5c562c2546f06ed093ad5d637481f2442afee19ccc6d426f37d4d6dbdeccdcd185fc4053deb0199f52d5313a6c6927d90c56edd53cda843115baf81e086a8b6e
   languageName: node
   linkType: hard
 
@@ -1569,10 +1575,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"zklighter-perps@npm:1.0.301":
-  version: 1.0.301
-  resolution: "zklighter-perps@npm:1.0.301"
-  checksum: 10c0/1ce9951570290efb930c96752e50940ccf1c481a0fbb26e1dde9bc0bf486a6493b6dc451d9a5e747d5b963baa177da8c9d1c72cd504cc66dd84cd763e93d090a
+"zklighter-perps@npm:1.0.372":
+  version: 1.0.372
+  resolution: "zklighter-perps@npm:1.0.372"
+  checksum: 10c0/306f0ab14dcd6d9cf84f9c45e1bea3bb051e90ea1786fdc9d43c7d70a0efb3acf7af3839d4e0e91cbbf90c8a24f665c7ce1fa024c655c1fb4efdda2d681fa478
   languageName: node
   linkType: hard
 
